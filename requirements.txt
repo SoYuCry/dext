@@ -2,3 +2,4 @@ PyNaCl
 requests
 numpy
 python-dotenv
+websockets>=11.0.0

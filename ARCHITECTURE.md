@@ -14,6 +14,8 @@
   - `api/aster.py`：本地封装（HMAC 签名）
   - `api/hyperliquid.py`：基于官方生成代码
   - `api/lighter.py`：本地封装 + 原生签名库
+- WebSocket 行情
+  - `api/ws/`：基础 WebSocket 客户端与 Backpack/Aster 订阅实现
 - 其他：`api/auth.py`（Backpack 签名助手）、`api/proxy_utils.py`（代理配置）、`api/__init__.py`（工厂 `get_client`）、`config.py`（环境变量配置）、`logger.py`（日志封装）
 
 ## 依赖
@@ -48,6 +50,16 @@ lighter = get_client(
     },
 )
 print(lighter.fetch_markets())
+
+# WebSocket 示例（需 websockets>=11）
+import asyncio
+from api.ws import get_ws_client
+
+async def handle(event):
+    print(event)
+
+ws = get_ws_client("backpack", ["BTC_USDC", "ETH_USDC"], handle)
+asyncio.run(ws.run_forever())
 ```
 
 其他交易所：`get_client("aster"|"lighter"|"hyperliquid", config)`；配置键沿用现有命名（如 `apiKey`/`secret`、`api_private_key`、`passphrase` 等）。
