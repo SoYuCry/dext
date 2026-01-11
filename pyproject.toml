@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dext"
+version = "0.1.0"
+description = "Exchange normalization support library (trade-side)"
+readme = "STRUCTURE.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[tool.setuptools]
+include-package-data = true
+py-modules = ["config", "logger"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["api*", "dext*"]

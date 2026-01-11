@@ -38,3 +38,19 @@ utils/                    # 通用工具
 run.py                    # 主入口
 dashboard.png             # Web 截图
 ```
+
+## 在策略项目中使用（推荐：可编辑安装）
+
+在 `StrategyA` 的虚拟环境中执行：
+
+```bash
+pip install -e /Users/liuc/Documents/Projects/dext
+```
+
+然后在策略代码里直接：
+
+```python
+from dext import get_client
+
+client = get_client("lighter", config={...})
+```
