@@ -1,0 +1,4 @@
+PyNaCl
+requests
+numpy
+python-dotenv

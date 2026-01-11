@@ -1,0 +1,30 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtualenvs
+venv/
+.venv/
+
+# Logs / dumps
+*.log
+*.gz
+
+# Local env/config
+.env
+.env.*
+config.local.py
+
+# Build / dist
+build/
+dist/
