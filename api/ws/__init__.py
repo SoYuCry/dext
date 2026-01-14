@@ -22,7 +22,7 @@ def get_user_ws_client(name: str, on_event: Callable[[Dict[str, Any]], Any], **k
     """按交易所名称返回用户数据流（订单/成交） WS 客户端。"""
     name = (name or "").lower()
     if name == "aster":
-        api_key = kwargs.get("api_key")
+        api_key = kwargs.pop("api_key", None)
         if not api_key:
             raise ValueError("Aster 用户流需要 api_key")
         return AsterUserWS(api_key=api_key, on_event=on_event, **kwargs)

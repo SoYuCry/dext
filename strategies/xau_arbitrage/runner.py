@@ -15,9 +15,13 @@ def load_config_from_env() -> StrategyConfig:
         api_key=os.getenv("BACKPACK_KEY", ""),
         secret=os.getenv("BACKPACK_SECRET"),
     )
+    aster_symbol = os.getenv("ASTER_SYMBOL", "XAUUSDT")
+    backpack_symbol = os.getenv("BACKPACK_SYMBOL", "PAXG_USDC_PERP")
     return StrategyConfig(
         aster=aster,
         backpack=backpack,
+        aster_symbol=aster_symbol,
+        backpack_symbol=backpack_symbol,
         dry_run=os.getenv("DRY_RUN", "true").lower() == "true",
     )
 

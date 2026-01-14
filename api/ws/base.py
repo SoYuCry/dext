@@ -25,11 +25,14 @@ class WebsocketClient:
         stream_url: str,
         on_event: EventHandler,
         reconnect_delay: float = 3.0,
+        warn_on_no_message_after: float = 5.0,
     ) -> None:
         self.name = name
         self.stream_url = stream_url
         self.on_event = on_event
         self.reconnect_delay = reconnect_delay
+        self.warn_on_no_message_after = warn_on_no_message_after
+        self._first_message = asyncio.Event()
 
     # ---- 钩子，子类可覆写 ----
     async def subscribe(self, ws: WebSocketClientProtocol) -> None:
@@ -76,12 +79,24 @@ class WebsocketClient:
                 await self.on_connect(ws)
                 await self.subscribe(ws)
                 print(f"[{self.name}] connected -> {url}")
+                watchdog = None
+                if self.warn_on_no_message_after and self.warn_on_no_message_after > 0:
+                    watchdog = asyncio.create_task(self._wait_first_message(url))
                 async for raw in ws:
                     ts_local_ms = int(time.time() * 1000)
+                    self._first_message.set()
                     await self.handle_message(raw, ts_local_ms)
+                if watchdog:
+                    watchdog.cancel()
         finally:
             await self.on_disconnect()
 
     @staticmethod
     def decode(raw: str) -> Dict[str, Any]:
         return json.loads(raw)
+
+    async def _wait_first_message(self, url: str) -> None:
+        try:
+            await asyncio.wait_for(self._first_message.wait(), timeout=self.warn_on_no_message_after)
+        except asyncio.TimeoutError:
+            print(f"[{self.name}] warning: no message received within {self.warn_on_no_message_after}s after connect (url={url})")

@@ -47,6 +47,7 @@ class XauArbitrageStrategy:
         self._tasks = []
 
     async def start(self) -> None:
+        await self._validate_symbols()
         await self.feed.start()
         self._tasks.append(asyncio.create_task(self.quote_mgr.start()))
         if self.config.use_user_stream:
@@ -72,6 +73,14 @@ class XauArbitrageStrategy:
         )
         task = asyncio.create_task(ws.run_forever())
         self._tasks.append(task)
+
+    async def _validate_symbols(self) -> None:
+        ok_aster = await self.aster.has_symbol(self.config.aster_symbol)
+        if not ok_aster:
+            logger.warning(f"Aster symbol '{self.config.aster_symbol}' not found in markets; quoting will fail.")
+        ok_bp = await self.backpack.has_symbol(self.config.backpack_symbol)
+        if not ok_bp:
+            logger.warning(f"Backpack symbol '{self.config.backpack_symbol}' not found in markets; hedging will fail.")
 
     async def _handle_aster_event(self, event: Dict) -> None:
         if event.get("stream") != "user":

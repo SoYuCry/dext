@@ -81,3 +81,18 @@ class ExchangeWrapper:
         except Exception as exc:  # noqa
             logger.warning(f"[{self.name}] fetch_ticker failed: {exc}")
             return None
+
+    async def has_symbol(self, symbol: str) -> bool:
+        """Check whether the exchange lists the symbol (by symbol or id)."""
+        try:
+            markets = await asyncio.to_thread(self.client.fetch_markets)
+        except Exception as exc:  # noqa
+            logger.warning(f"[{self.name}] fetch_markets failed: {exc}")
+            return False
+        symbol_u = (symbol or "").upper()
+        for m in markets or []:
+            if (m.get("symbol") or "").upper() == symbol_u:
+                return True
+            if (m.get("id") or "").upper() == symbol_u:
+                return True
+        return False

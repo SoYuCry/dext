@@ -18,8 +18,8 @@ class StrategyConfig:
     backpack: ExchangeKeys
 
     # Trading symbols
-    aster_symbol: str = "XAUUSDC"
-    backpack_symbol: str = "XAU_USDC"
+    aster_symbol: str = "XAUUSDT"
+    backpack_symbol: str = "PAXG_USDC_PERP"
 
     # Quoting
     order_size: float = 0.1

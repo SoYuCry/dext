@@ -42,6 +42,12 @@ class PriceFeed:
             asyncio.create_task(aster_ws.run_forever()),
             asyncio.create_task(bp_ws.run_forever()),
         ]
+        # Warn if snapshot not received shortly after start
+        await asyncio.sleep(3)
+        if "aster" not in self.snapshots:
+            logger.warning(f"No Aster depth snapshot yet for symbol={self.aster_symbol} (check symbol correctness or WS health)")
+        if "backpack" not in self.snapshots:
+            logger.warning(f"No Backpack depth snapshot yet for symbol={self.backpack_symbol} (check symbol correctness or WS health)")
 
     async def stop(self) -> None:
         for t in self._tasks:

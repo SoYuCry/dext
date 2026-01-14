@@ -48,7 +48,7 @@ class QuoteManager:
     async def _cycle_once(self) -> None:
         snap = self.feed.get_bbo("aster")
         if not snap or snap.mid is None:
-            logger.warning("quote skipped: no mid price")
+            logger.warning(f"quote skipped: no mid price for Aster symbol={self.symbol}")
             return
 
         # Cancel previous quotes

@@ -17,10 +17,12 @@ export BACKPACK_SECRET=your_backpack_secret
 
 # 其他可选
 export DRY_RUN=true          # 默认 true；设为 false 才会真实下单
+export ASTER_SYMBOL=XAUUSDT  # 如需换合约在此覆盖
+export BACKPACK_SYMBOL=PAXG_USDC_PERP  # 请填 Backpack 实际可交易的标的
 ```
 3) 默认符号：
-- Aster: `XAUUSDC`
-- Backpack: `XAU_USDC`
+- Aster: `XAUUSDT`
+- Backpack: 请确认实际有此品种；默认示例为 `PAXG_USDC_PERP`，如无对应标的则无法对冲
 （如需修改，创建自定义 `StrategyConfig`，或扩展 `runner.py` 读取配置）
 
 ## 运行
