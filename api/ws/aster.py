@@ -44,7 +44,7 @@ class AsterWS(WebsocketClient):
         event = {
             "exchange": "aster",
             "symbol": symbol,
-            "type": "l2",
+            "stream": "l2",
             "ts_exchange": data.get("E") or data.get("T"),
             "ts_local": ts_local_ms,
             "bids": _parse_levels(data.get("b", [])),

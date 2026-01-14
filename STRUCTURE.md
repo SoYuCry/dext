@@ -39,6 +39,8 @@ run.py                    # 主入口
 dashboard.png             # Web 截图
 ```
 
+> 备注：旧版线程式 WebSocket 客户端代码已移至 `docs/examples/ws_client/` 作为参考。
+
 ## 在策略项目中使用（推荐：可编辑安装）
 
 在 `StrategyA` 的虚拟环境中执行：

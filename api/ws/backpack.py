@@ -83,7 +83,7 @@ class BackpackWS(WebsocketClient):
             event = {
                 "exchange": "backpack",
                 "symbol": symbol,
-                "type": "bbo",
+                "stream": "bbo",
                 "ts_exchange": data.get("T") or data.get("E") or ts_local_ms,
                 "ts_local": ts_local_ms,
                 "bids": [[bid_price, bid_qty]],
@@ -102,7 +102,7 @@ class BackpackWS(WebsocketClient):
             event = {
                 "exchange": "backpack",
                 "symbol": symbol,
-                "type": "l2",
+                "stream": "l2",
                 "ts_exchange": data.get("T") or data.get("E") or ts_local_ms,
                 "ts_local": ts_local_ms,
                 "bids": _parse_levels(data.get("b", [])),
