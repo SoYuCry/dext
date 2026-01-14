@@ -1,0 +1,83 @@
+"""Exchange wrappers used by the strategy."""
+import asyncio
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
+from api import get_client
+from logger import setup_logger
+
+logger = setup_logger("xau.exchanges")
+
+
+@dataclass
+class OrderRef:
+    order_id: str
+    symbol: str
+    side: str
+    price: float
+    amount: float
+    info: Dict[str, Any]
+
+
+class ExchangeWrapper:
+    """Thin wrapper around ccxt-style client to keep strategy code concise."""
+
+    def __init__(self, name: str, config: Dict[str, Any]) -> None:
+        self.name = name
+        self.client = get_client(name, config)
+        self.symbol = config.get("symbol")
+
+    async def create_limit_order(self, symbol: str, side: str, amount: float, price: float) -> Optional[OrderRef]:
+        return await asyncio.to_thread(self._create_order_sync, symbol, side, amount, price, "limit")
+
+    async def create_market_order(self, symbol: str, side: str, amount: float) -> Optional[OrderRef]:
+        return await asyncio.to_thread(self._create_order_sync, symbol, side, amount, None, "market")
+
+    def _create_order_sync(self, symbol: str, side: str, amount: float, price: Optional[float], otype: str) -> Optional[OrderRef]:
+        try:
+            order = self.client.create_order(symbol, otype, side, amount, price) if price is not None else self.client.create_order(symbol, otype, side, amount)
+            return OrderRef(
+                order_id=str(order.get("id")),
+                symbol=symbol,
+                side=side,
+                price=float(order.get("price") or price or 0),
+                amount=float(order.get("amount") or amount),
+                info=order,
+            )
+        except Exception as exc:  # noqa
+            logger.error(f"[{self.name}] create_order failed: {exc}")
+            return None
+
+    async def cancel_orders(self, symbol: str, order_ids: List[str]) -> None:
+        await asyncio.gather(*(asyncio.to_thread(self._cancel_one, symbol, oid) for oid in order_ids))
+
+    def _cancel_one(self, symbol: str, order_id: str) -> None:
+        try:
+            self.client.cancel_order(order_id, symbol)
+        except Exception as exc:  # noqa
+            logger.warning(f"[{self.name}] cancel_order {order_id} failed: {exc}")
+
+    async def fetch_order(self, symbol: str, order_id: str) -> Optional[Dict[str, Any]]:
+        return await asyncio.to_thread(self._fetch_order_sync, symbol, order_id)
+
+    def _fetch_order_sync(self, symbol: str, order_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            return self.client.fetch_order(order_id, symbol)
+        except Exception as exc:  # noqa
+            logger.warning(f"[{self.name}] fetch_order {order_id} failed: {exc}")
+            return None
+
+    async def fetch_open_orders(self, symbol: str) -> List[Dict[str, Any]]:
+        try:
+            orders = await asyncio.to_thread(self.client.fetch_open_orders, symbol)
+            return orders or []
+        except Exception as exc:  # noqa
+            logger.warning(f"[{self.name}] fetch_open_orders failed: {exc}")
+            return []
+
+    async def fetch_ticker(self, symbol: str) -> Optional[Dict[str, Any]]:
+        try:
+            return await asyncio.to_thread(self.client.fetch_ticker, symbol)
+        except Exception as exc:  # noqa
+            logger.warning(f"[{self.name}] fetch_ticker failed: {exc}")
+            return None
