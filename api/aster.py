@@ -8,12 +8,17 @@ from .base.errors import (
     ArgumentsRequired,
     AuthenticationError,
     BadRequest,
+    BadResponse,
     BadSymbol,
     ExchangeError,
+    InsufficientFunds,
     InvalidNonce,
     InvalidOrder,
+    NetworkError,
+    OperationFailed,
     OrderNotFound,
     RateLimitExceeded,
+    RequestTimeout,
 )
 from .base.precise import Precise
 
@@ -74,14 +79,39 @@ class aster(Exchange):
                 },
                 "exceptions": {
                     "exact": {
-                        "-1003": RateLimitExceeded,
-                        "-1021": InvalidNonce,
-                        "-1121": BadSymbol,
-                        "-2010": InvalidOrder,
-                        "-2011": InvalidOrder,
-                        "-2013": OrderNotFound,
-                        "-2014": OrderNotFound,
-                        "-2015": AuthenticationError,
+                        # 10xx - General Server or Network issues
+                        "-1000": OperationFailed,  # UNKNOWN
+                        "-1001": NetworkError,  # DISCONNECTED
+                        "-1002": AuthenticationError,  # UNAUTHORIZED
+                        "-1003": RateLimitExceeded,  # TOO_MANY_REQUESTS
+                        "-1006": BadResponse,  # UNEXPECTED_RESP
+                        "-1007": RequestTimeout,  # TIMEOUT
+                        "-1015": RateLimitExceeded,  # TOO_MANY_ORDERS
+                        "-1021": InvalidNonce,  # INVALID_TIMESTAMP
+                        "-1022": AuthenticationError,  # INVALID_SIGNATURE
+                        # 11xx - Request issues
+                        "-1100": BadRequest,  # ILLEGAL_CHARS
+                        "-1102": ArgumentsRequired,  # MANDATORY_PARAM_EMPTY_OR_MALFORMED
+                        "-1121": BadSymbol,  # BAD_SYMBOL
+                        # 20xx - Processing Issues
+                        "-2010": InvalidOrder,  # NEW_ORDER_REJECTED
+                        "-2011": OrderNotFound,  # CANCEL_REJECTED
+                        "-2013": OrderNotFound,  # NO_SUCH_ORDER
+                        "-2014": AuthenticationError,  # BAD_API_KEY_FMT
+                        "-2015": AuthenticationError,  # REJECTED_MBX_KEY
+                        "-2018": InsufficientFunds,  # BALANCE_NOT_SUFFICIENT
+                        "-2019": InsufficientFunds,  # MARGIN_NOT_SUFFICIENT
+                        # 40xx - Filters and validation
+                        "-4000": InvalidOrder,  # INVALID_ORDER_STATUS
+                        "-4001": InvalidOrder,  # PRICE_LESS_THAN_ZERO
+                        "-4004": InvalidOrder,  # QTY_LESS_THAN_MIN_QTY
+                        "-4013": InvalidOrder,  # PRICE_LESS_THAN_MIN_PRICE
+                    },
+                    "broad": {
+                        # Pattern matching for error messages
+                        "has no position": InvalidOrder,
+                        "does not exist": BadSymbol,
+                        "Invalid symbol": BadSymbol,
                     },
                 },
             },
