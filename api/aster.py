@@ -4,6 +4,7 @@ import hashlib
 from typing import Any, Dict, List, Optional
 
 from .base.exchange import Exchange
+from .abstract.aster import ImplicitAPI
 from .base.errors import (
     ArgumentsRequired,
     AuthenticationError,
@@ -23,7 +24,7 @@ from .base.errors import (
 from .base.precise import Precise
 
 
-class aster(Exchange):
+class aster(Exchange, ImplicitAPI):
     def describe(self) -> Dict[str, Any]:
         return self.deep_extend(
             super(aster, self).describe(),
