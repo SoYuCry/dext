@@ -73,6 +73,39 @@ class aster(Exchange):
                     "www": "https://asterdex.com",
                     "doc": "https://asterdex.com",
                 },
+                "api": {
+                    "public": {
+                        "get": [
+                            "fapi/v1/ping",
+                            "fapi/v1/time",
+                            "fapi/v1/exchangeInfo",
+                            "fapi/v1/depth",
+                            "fapi/v1/trades",
+                            "fapi/v1/klines",
+                            "fapi/v1/ticker/24hr",
+                            "fapi/v1/ticker/price",
+                            "fapi/v1/premiumIndex",
+                            "fapi/v1/fundingRate",
+                        ],
+                    },
+                    "private": {
+                        "get": [
+                            "fapi/v1/order",
+                            "fapi/v1/openOrders",
+                            "fapi/v1/allOrders",
+                            "fapi/v2/balance",
+                            "fapi/v2/positionRisk",
+                            "fapi/v1/userTrades",
+                        ],
+                        "post": [
+                            "fapi/v1/order",
+                        ],
+                        "delete": [
+                            "fapi/v1/order",
+                            "fapi/v1/allOpenOrders",
+                        ],
+                    },
+                },
                 "options": {
                     "recvWindow": 5000,
                     "defaultType": "swap",
