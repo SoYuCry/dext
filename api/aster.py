@@ -22,6 +22,7 @@ from .base.errors import (
     RequestTimeout,
 )
 from .base.precise import Precise
+from .base.decimal_to_precision import TICK_SIZE
 
 
 class aster(Exchange, ImplicitAPI):
@@ -32,25 +33,41 @@ class aster(Exchange, ImplicitAPI):
                 "id": "aster",
                 "name": "Aster Futures",
                 "countries": ["SG"],
-                "rateLimit": 50,
+                "rateLimit": 333,  # 3 req/s = 333ms
+                "hostname": "asterdex.com",
+                "certified": False,
+                "pro": True,  # WebSocket support via api/ws/aster.py
                 "version": "v1",
-                "pro": False,
+                "dex": True,  # Aster is a DEX
                 "has": {
+                    "CORS": None,
                     "spot": False,
+                    "margin": False,
                     "swap": True,
-                    "fetchMarkets": True,
-                    "fetchTicker": True,
-                    "fetchOrderBook": True,
-                    "fetchTrades": True,
-                    "fetchOHLCV": True,
+                    "future": False,
+                    "option": False,
+                    "addMargin": True,
+                    "cancelAllOrders": True,
+                    "cancelOrder": True,
+                    "createOrder": True,
                     "fetchBalance": True,
-                    "fetchPositions": True,
+                    "fetchFundingRate": True,
+                    "fetchFundingRateHistory": True,
+                    "fetchLeverage": "emulated",
+                    "fetchMarkets": True,
+                    "fetchMyTrades": True,
+                    "fetchOHLCV": True,
                     "fetchOpenOrders": True,
                     "fetchOrder": True,
+                    "fetchOrderBook": True,
                     "fetchOrders": False,
-                    "fetchMyTrades": True,
-                    "createOrder": True,
-                    "cancelOrder": True,
+                    "fetchPositions": True,
+                    "fetchTicker": True,
+                    "fetchTickers": True,
+                    "fetchTrades": True,
+                    "setLeverage": True,
+                    "setMarginMode": True,
+                    "transfer": True,
                 },
                 "timeframes": {
                     "1m": "1m",
@@ -67,13 +84,30 @@ class aster(Exchange, ImplicitAPI):
                     "1d": "1d",
                 },
                 "urls": {
+                    "logo": "https://github.com/user-attachments/assets/4982201b-73cd-4d7a-8907-e69e239e9609",
+                    "www": "https://www.asterdex.com/en",
                     "api": {
-                        "public": "https://fapi.asterdex.com",
-                        "private": "https://fapi.asterdex.com",
+                        "fapiPublic": "https://fapi.asterdex.com/fapi",
+                        "fapiPrivate": "https://fapi.asterdex.com/fapi",
+                        "sapiPublic": "https://sapi.asterdex.com/api",
+                        "sapiPrivate": "https://sapi.asterdex.com/api",
                     },
-                    "www": "https://asterdex.com",
-                    "doc": "https://asterdex.com",
+                    "doc": "https://github.com/asterdex/api-docs",
+                    "fees": "https://docs.asterdex.com/product/asterex-simple/fees-and-slippage",
+                    "referral": {
+                        "url": "https://www.asterdex.com/en/referral/aA1c2B",
+                        "discount": 0.1,
+                    },
                 },
+                "fees": {
+                    "trading": {
+                        "tierBased": True,
+                        "percentage": True,
+                        "maker": 0.0001,  # 0.01%
+                        "taker": 0.00035,  # 0.035%
+                    },
+                },
+                "precisionMode": TICK_SIZE,
                 "api": {
                     "public": {
                         "get": [
