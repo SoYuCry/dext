@@ -1,11 +1,10 @@
 """WebSocket 订阅工厂。"""
 from typing import Any, Callable, Dict, Iterable
 
-from .aster import AsterWS
-from .aster_user import AsterUserWS
+from .aster import AsterWS, AsterDepthWS, AsterUserWS
 from .backpack import BackpackWS
 
-__all__ = ["get_ws_client", "get_user_ws_client", "BackpackWS", "AsterWS", "AsterUserWS"]
+__all__ = ["get_ws_client", "get_user_ws_client", "BackpackWS", "AsterWS", "AsterDepthWS", "AsterUserWS"]
 
 
 def get_ws_client(name: str, symbols: Iterable[str], on_event: Callable[[Dict[str, Any]], Any], **kwargs):
