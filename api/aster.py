@@ -289,18 +289,34 @@ class aster(Exchange, ImplicitAPI):
         timestamp = self.safe_integer(ticker, "closeTime") or self.safe_integer(ticker, "time")
         last = self.safe_string_2(ticker, "lastPrice", "price")
         open_price = self.safe_string(ticker, "openPrice")
-        quote_volume = self.safe_string(ticker, "quoteVolume")
+
+        # Add bid/ask prices
+        bid = self.safe_string(ticker, "bidPrice")
+        ask = self.safe_string(ticker, "askPrice")
+
+        # Calculate VWAP if possible
         base_volume = self.safe_string(ticker, "volume")
+        quote_volume = self.safe_string(ticker, "quoteVolume")
+        vwap = None
+        if quote_volume is not None and base_volume is not None:
+            vwap = Precise.string_div(quote_volume, base_volume)
+
         return self.safe_ticker(
             {
                 "symbol": symbol,
                 "timestamp": timestamp,
                 "datetime": self.iso8601(timestamp),
-                "open": open_price,
                 "high": self.safe_string(ticker, "highPrice"),
                 "low": self.safe_string(ticker, "lowPrice"),
+                "bid": bid,
+                "bidVolume": self.safe_string(ticker, "bidQty"),
+                "ask": ask,
+                "askVolume": self.safe_string(ticker, "askQty"),
+                "vwap": vwap,
+                "open": open_price,
                 "close": last,
                 "last": last,
+                "previousClose": None,
                 "change": self.safe_string(ticker, "priceChange"),
                 "percentage": self.safe_string(ticker, "priceChangePercent"),
                 "average": None,
