@@ -1,45 +1,62 @@
 # 文件结构总览
 
-重构前后目录分开描述，便于对照。
+v0.1.0 版本专注于 Aster + Backpack 交易所支持。
 
-## 重构后（统一交易客户端）
+## 当前结构（v0.1.0）
+
 ```
 api/
-├── __init__.py
-├── auth.py
-├── bp_client.py          # Backpack 别名
-├── proxy_utils.py
-├── base/                 # 通用基类/类型/错误
-└── exchanges/            # 各交易所适配器
-    ├── __init__.py
-    ├── aster.py
-    ├── backpack.py
-    ├── hyperliquid.py
-    └── lighter.py
+├── __init__.py              # get_client(): aster, backpack
+├── aster.py                 # Aster REST API
+├── backpack.py              # Backpack REST API
+├── auth.py                  # Backpack 签名工具
+├── proxy_utils.py           # 代理配置
+├── base/                    # 通用基类/类型/错误
+│   ├── exchange.py
+│   ├── types.py
+│   ├── errors.py
+│   ├── precise.py
+│   └── decimal_to_precision.py
+└── ws/                      # WebSocket 客户端
+    ├── __init__.py          # get_ws_client(), get_user_ws_client()
+    ├── base.py              # WebsocketClient 基类
+    ├── aster.py             # AsterWS, AsterDepthWS, AsterUserWS
+    └── backpack.py          # BackpackWS, BackpackUserWS
 
-config.py
-logger.py
+docs/
+├── plans/                   # 设计文档
+│   ├── 2026-01-16-v0.1.0-cleanup-and-backpack-userws-design.md
+│   └── ...
+└── archived/
+    └── exchanges/           # 归档的交易所实现
+        ├── README.md
+        ├── hyperliquid.py
+        ├── lighter.py
+        ├── lighter_signer.py
+        └── lighter_client.py
+
+# 测试脚本
+subscribe_paxg_BackPack.py   # Backpack 订单簿订阅测试
+subscribe_xau_Aster.py       # Aster 订单簿订阅测试
+subscribe_trades_backpack.py # Backpack 用户数据流测试
+
+config.py                    # 环境变量配置
+logger.py                    # 日志封装
 README.md
-requirements.txt
 ARCHITECTURE.md
 STRUCTURE.md
+CHANGELOG.md
+requirements.txt
 ```
 
-## 重构前（策略 + Web/CLI + DB）
-```
-api/                      # 多交易所 REST 客户端
-ws_client/                # WebSocket 客户端
-strategies/               # 做市/网格/对冲策略
-cli/                      # 命令行入口
-web/                      # Flask Web 控制台
-database/                 # SQLite 持久化
-docs/                     # 策略说明文档
-utils/                    # 通用工具
-run.py                    # 主入口
-dashboard.png             # Web 截图
-```
+## 归档的交易所
 
-> 备注：旧版线程式 WebSocket 客户端代码已移至 `docs/examples/ws_client/` 作为参考。
+以下交易所实现已归档到 `docs/archived/exchanges/`：
+
+- **Hyperliquid** (`hyperliquid.py`) - 官方生成代码
+- **Lighter** (`lighter.py`, `lighter_signer.py`, `lighter_client.py`) - 本地封装 + 原生 signer
+
+这些交易所可能在未来版本中重新引入。
 
 ## 在策略项目中使用（推荐：可编辑安装）
 
@@ -54,5 +71,20 @@ pip install -e /Users/liuc/Documents/Projects/dext
 ```python
 from dext import get_client
 
-client = get_client("lighter", config={...})
+# REST API
+client = get_client("aster", config={...})
+
+# WebSocket 订单簿
+from api.ws import get_ws_client
+ws = get_ws_client("backpack", ["PAXG_USDC_PERP"], handler)
+
+# WebSocket 用户数据流（订单成交）
+from api.ws import get_user_ws_client
+ws = get_user_ws_client("backpack", handler, api_key="...", secret="...")
 ```
+
+## v0.1.0 新增功能
+
+- **Backpack 用户数据流**: 实时订单成交监控
+- **测试脚本**: `subscribe_trades_backpack.py`
+- **代码清理**: 归档无关交易所，聚焦核心功能

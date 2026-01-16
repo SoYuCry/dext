@@ -6,8 +6,6 @@ from typing import Any
 __all__ = [
     "Backpack",
     "Aster",
-    "Lighter",
-    "Hyperliquid",
     "BPClient",
     "get_client",
 ]
@@ -23,12 +21,8 @@ def get_client(name: str, *args, **kwargs):
     name = (name or "").lower()
     if name in ("backpack", "bp"):
         return _load("api.backpack", "backpack")(*args, **kwargs)
-    if name == "lighter":
-        return _load("api.lighter", "lighter")(*args, **kwargs)
     if name == "aster":
         return _load("api.aster", "aster")(*args, **kwargs)
-    if name in ("hyperliquid", "hyper"):
-        return _load("api.hyperliquid", "hyperliquid")(*args, **kwargs)
     raise ValueError(f"未知交易所: {name}")
 
 
@@ -39,15 +33,7 @@ def __getattr__(name: str):
         return _load("api.backpack", "backpack")
     if name == "Aster":
         return _load("api.aster", "aster")
-    if name == "Lighter":
-        return _load("api.lighter", "lighter")
-    if name == "Hyperliquid":
-        return _load("api.hyperliquid", "hyperliquid")
     # Legacy aliases
     if name == "AsterClient":
         return _load("api.aster", "aster")
-    if name == "LighterClient":
-        return _load("api.lighter", "lighter")
-    if name == "HyperliquidClient":
-        return _load("api.hyperliquid", "hyperliquid")
     raise AttributeError(name)

@@ -2,6 +2,8 @@
 
 本仓库精简为「纯交易 API 客户端」，提供统一的下单/行情接口（`fetch_*`、`create_order`、`cancel_order` 等），不包含策略、CLI、Web 或数据库组件。
 
+**v0.1.0 支持的交易所：Aster, Backpack**
+
 ## 模块分层
 
 - `api/base/`
@@ -12,19 +14,29 @@
 - 单文件交易所实现
   - `api/backpack.py`：基于官方生成代码
   - `api/aster.py`：本地封装（HMAC 签名）
-  - `api/hyperliquid.py`：基于官方生成代码
-  - `api/lighter.py`：本地封装 + 原生签名库
-- WebSocket 行情
-  - `api/ws/`：基础 WebSocket 客户端与 Backpack/Aster 订阅实现
+- WebSocket 行情和用户数据流
+  - `api/ws/base.py`：基础 WebSocket 客户端
+  - `api/ws/backpack.py`：Backpack 订单簿订阅和用户数据流（订单、成交）
+  - `api/ws/aster.py`：Aster 订单簿订阅和用户数据流
 - 其他：`api/auth.py`（Backpack 签名助手）、`api/proxy_utils.py`（代理配置）、`api/__init__.py`（工厂 `get_client`）、`config.py`（环境变量配置）、`logger.py`（日志封装）
+
+## 归档的交易所
+
+v0.1.0 版本将以下交易所实现归档到 `docs/archived/exchanges/`：
+
+- Hyperliquid - 官方生成代码
+- Lighter - 本地封装 + 原生签名库
+
+这些交易所可能在未来版本中重新引入。
 
 ## 依赖
 
 - 已内置基类与精度工具，无需额外核心依赖
-- 其他：`requests`、`PyNaCl`（Backpack 签名）、`cryptography`（ed25519）等，详见 `requirements.txt`
-- Lighter 需本地 signer 动态库（见 `Signer/Lighter` 下的 `.dylib/.so/.dll`），并提供 `api_private_key` 与 `account_index`
+- 其他：`requests`、`PyNaCl`（Backpack 签名）、`cryptography`（ed25519）、`websockets`（WebSocket 客户端）等，详见 `requirements.txt`
 
 ## 使用方式
+
+### REST API
 
 ```python
 from api import get_client
@@ -34,38 +46,56 @@ ticker = client.fetch_ticker("SOL/USDC")
 order = client.create_order("SOL/USDC", "limit", "buy", 1, 100)
 client.cancel_order(order["id"], "SOL/USDC")
 
-# Hyperliquid
-hyper = get_client("hyperliquid", {"walletAddress": "...", "privateKey": "...", "password": "..."})
-print(hyper.fetch_markets())
+# Aster
+aster = get_client("aster", {"apiKey": "...", "secret": "..."})
+print(aster.fetch_markets())
+```
 
-# Lighter（需本地 signer 动态库）
-lighter = get_client(
-    "lighter",
-    {
-        "base_url": "https://mainnet.zklighter.elliot.ai",
-        "api_private_key": "<hex private key>",
-        "account_index": 0,
-        "api_key_index": 0,
-        "signer_lib_dir": "Signer/Lighter",
-    },
-)
-print(lighter.fetch_markets())
+### WebSocket 订单簿订阅
 
-# WebSocket 示例（需 websockets>=11）
+```python
 import asyncio
 from api.ws import get_ws_client
 
 async def handle(event):
     print(event)
 
-ws = get_ws_client("backpack", ["BTC_USDC", "ETH_USDC"], handle)
+# Backpack
+ws = get_ws_client("backpack", ["PAXG_USDC_PERP"], handle, include_depth=True)
+asyncio.run(ws.run_forever())
+
+# Aster
+from api.ws import AsterDepthWS
+ws = AsterDepthWS(["xauusdt"], handle, depth_level=20)
 asyncio.run(ws.run_forever())
 ```
 
-其他交易所：`get_client("aster"|"lighter"|"hyperliquid", config)`；配置键沿用现有命名（如 `apiKey`/`secret`、`api_private_key`、`passphrase` 等）。
+### WebSocket 用户数据流（订单成交）
+
+```python
+import asyncio
+from api.ws import get_user_ws_client
+
+async def handle(event):
+    print(event)  # 订单更新、成交明细
+
+# Backpack 用户数据流
+ws = get_user_ws_client("backpack", handle, api_key="...", secret="...")
+asyncio.run(ws.run_forever())
+
+# Aster 用户数据流
+ws = get_user_ws_client("aster", handle, api_key="...")
+asyncio.run(ws.run_forever())
+```
 
 ## 设计取向
 
-- Backpack / Hyperliquid：使用官方提供的生成代码，保持端点一致。
-- Aster / Lighter：本地封装，签名逻辑与交易所 REST 兼容（Aster HMAC、Lighter signer）。
-- 不包含策略/界面/数据库，仅保留 REST 客户端能力，便于脚本化下单或作为依赖集成。
+- **Backpack**: 使用官方提供的生成代码，保持端点一致。支持 REST API、订单簿 WebSocket 和用户数据流（订单、成交）。
+- **Aster**: 本地封装，签名逻辑与交易所 REST 兼容（HMAC）。支持 REST API、订单簿 WebSocket 和用户数据流。
+- 不包含策略/界面/数据库，仅保留 REST 客户端和 WebSocket 能力，便于脚本化下单或作为依赖集成。
+
+## v0.1.0 特性
+
+- 专注于 Aster + Backpack 套利场景
+- Backpack 用户数据流支持（实时订单成交）
+- 清晰的代码结构，易于维护和扩展
