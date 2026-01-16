@@ -154,8 +154,25 @@ class aster(Exchange, ImplicitAPI):
                     },
                 },
                 "options": {
-                    "recvWindow": 5000,
-                    "defaultType": "swap",
+                    "recvWindow": 10 * 1000,  # 10 sec default
+                    "defaultTimeInForce": "GTC",  # Good Till Cancel
+                    "defaultType": "swap",  # Default market type
+                    "accountsByType": {
+                        "spot": "SPOT",
+                        "future": "FUTURE",
+                        "linear": "FUTURE",
+                        "swap": "FUTURE",
+                    },
+                    "networks": {
+                        "ERC20": "ETH",
+                        "BEP20": "BSC",
+                        "ARB": "Arbitrum",
+                    },
+                    "networksToChainId": {
+                        "ETH": 1,
+                        "BSC": 56,
+                        "Arbitrum": 42161,
+                    },
                 },
                 "exceptions": {
                     "exact": {
