@@ -15,7 +15,7 @@ class QuoteManager:
         exchange: ExchangeWrapper,
         feed: PriceFeed,
         symbol: str,
-        order_size: float,
+        order_sizes: List[float],
         price_offsets: List[float],
         quote_interval_sec: float,
         max_open_quotes: int,
@@ -24,7 +24,7 @@ class QuoteManager:
         self.exchange = exchange
         self.feed = feed
         self.symbol = symbol
-        self.order_size = order_size
+        self.order_sizes = order_sizes
         self.price_offsets = price_offsets
         self.quote_interval_sec = quote_interval_sec
         self.max_open_quotes = max_open_quotes
@@ -58,9 +58,12 @@ class QuoteManager:
 
         price = snap.mid
         new_orders: List[str] = []
-        for off in self.price_offsets:
+
+        # Place orders for each tier (offset + size pair)
+        for i, (off, size) in enumerate(zip(self.price_offsets, self.order_sizes)):
             buy_price = price * (1 - off)
             sell_price = price * (1 + off)
+
             # Enforce guardrail
             if len(new_orders) >= self.max_open_quotes:
                 logger.warning("quote skipped: reached max_open_quotes")
@@ -68,22 +71,22 @@ class QuoteManager:
 
             # Place buy
             if not self.dry_run:
-                order = await self.exchange.create_limit_order(self.symbol, "buy", self.order_size, buy_price)
+                order = await self.exchange.create_limit_order(self.symbol, "buy", size, buy_price)
                 if order:
                     new_orders.append(order.order_id)
             else:
-                new_orders.append(f"dry-buy-{off}")
-                logger.info(f"[dry-run] buy {self.order_size} @ {buy_price:.4f}")
+                new_orders.append(f"dry-buy-tier{i}")
+                logger.info(f"[dry-run] tier{i} buy ${size:.1f} @ {buy_price:.2f} (offset -{off*100:.2f}%)")
 
             # Place sell
             if len(new_orders) >= self.max_open_quotes:
                 break
             if not self.dry_run:
-                order = await self.exchange.create_limit_order(self.symbol, "sell", self.order_size, sell_price)
+                order = await self.exchange.create_limit_order(self.symbol, "sell", size, sell_price)
                 if order:
                     new_orders.append(order.order_id)
             else:
-                new_orders.append(f"dry-sell-{off}")
-                logger.info(f"[dry-run] sell {self.order_size} @ {sell_price:.4f}")
+                new_orders.append(f"dry-sell-tier{i}")
+                logger.info(f"[dry-run] tier{i} sell ${size:.1f} @ {sell_price:.2f} (offset +{off*100:.2f}%)")
 
         self.active_order_ids = new_orders

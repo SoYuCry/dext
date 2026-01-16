@@ -29,7 +29,7 @@ class XauArbitrageStrategy:
             exchange=self.aster,
             feed=self.feed,
             symbol=config.aster_symbol,
-            order_size=config.order_size,
+            order_sizes=config.order_sizes,
             price_offsets=config.price_offsets,
             quote_interval_sec=config.quote_interval_sec,
             max_open_quotes=config.max_open_quotes,

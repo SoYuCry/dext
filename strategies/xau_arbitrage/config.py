@@ -21,9 +21,9 @@ class StrategyConfig:
     aster_symbol: str = "XAUUSDT"
     backpack_symbol: str = "PAXG_USDC_PERP"
 
-    # Quoting
-    order_size: float = 0.1
-    price_offsets: List[float] = field(default_factory=lambda: [0.001, 0.002, 0.003])  # 0.1%/0.2%/0.3%
+    # Quoting (multi-tier orders to catch big fingers)
+    order_sizes: List[float] = field(default_factory=lambda: [30.0, 30.0, 40.0])  # USD sizes: 30u, 30u, 40u
+    price_offsets: List[float] = field(default_factory=lambda: [0.0015, 0.0025, 0.004])  # 0.15%/0.25%/0.40%
     quote_interval_sec: float = 10.0
 
     # Hedging
