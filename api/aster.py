@@ -675,8 +675,15 @@ class aster(Exchange, ImplicitAPI):
         if code is None and message is None:
             return
         feedback = self.id + " " + responseBody
+
+        # Exact code matching
         self.throw_exactly_matched_exception(self.exceptions["exact"], code, feedback)
-        self.throw_exactly_matched_exception(self.exceptions["exact"], message, feedback)
+
+        # Broad pattern matching on message
+        if "broad" in self.exceptions:
+            self.throw_broadly_matched_exception(self.exceptions["broad"], message, feedback)
+
+        # Still throw generic error if not matched
         raise ExchangeError(feedback)
 
 
