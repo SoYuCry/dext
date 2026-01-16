@@ -49,7 +49,7 @@ The server will start on `http://127.0.0.1:8765`
 Open your browser to:
 
 ```
-http://127.0.0.1:8765/index.html
+http://127.0.0.1:8765/
 ```
 
 You should see real-time updates of your positions, orders, and fills.

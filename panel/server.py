@@ -1,9 +1,11 @@
-"""WebSocket server to broadcast real-time data to frontend clients."""
+"""WebSocket server with HTTP static file serving."""
 import asyncio
 import json
-import websockets
+from pathlib import Path
 from typing import Set
-from websockets.server import WebSocketServerProtocol
+
+from aiohttp import web, WSMsgType
+from aiohttp.web import Request, WebSocketResponse
 
 from .collector import DataCollector
 from .config import HOST, PORT
@@ -13,39 +15,57 @@ class PanelServer:
     """WebSocket server that broadcasts exchange data to connected clients."""
 
     def __init__(self):
-        self.clients: Set[WebSocketServerProtocol] = set()
+        self.clients: Set[WebSocketResponse] = set()
         self.collector = DataCollector(on_update_callback=self._on_data_update)
+        self.app = web.Application()
+        self._setup_routes()
 
-    async def start(self):
-        """Start the WebSocket server and data collector."""
-        # Start data collector
-        await self.collector.start()
+    def _setup_routes(self):
+        """Setup HTTP and WebSocket routes."""
+        self.app.router.add_get('/ws', self._handle_websocket)
+        self.app.router.add_get('/', self._handle_index)
+        self.app.router.add_get('/index.html', self._handle_index)
+        # Serve static files from static/ directory
+        static_dir = Path(__file__).parent / 'static'
+        self.app.router.add_static('/static/', path=static_dir, name='static')
 
-        # Start WebSocket server
-        async with websockets.serve(self._handle_client, HOST, PORT):
-            print(f"[PanelServer] WebSocket server running on ws://{HOST}:{PORT}")
-            print(f"[PanelServer] Open http://{HOST}:{PORT}/index.html in your browser")
-            await asyncio.Future()  # Run forever
+    async def _handle_index(self, request: Request):
+        """Serve the index.html file."""
+        static_dir = Path(__file__).parent / 'static'
+        index_file = static_dir / 'index.html'
 
-    async def _handle_client(self, websocket: WebSocketServerProtocol):
-        """Handle a new WebSocket client connection."""
-        self.clients.add(websocket)
-        print(f"[PanelServer] Client connected: {websocket.remote_address}")
+        if not index_file.exists():
+            return web.Response(text="index.html not found", status=404)
+
+        return web.FileResponse(index_file)
+
+    async def _handle_websocket(self, request: Request):
+        """Handle WebSocket connection."""
+        ws = WebSocketResponse()
+        await ws.prepare(request)
+
+        self.clients.add(ws)
+        print(f"[PanelServer] Client connected: {request.remote}")
 
         try:
             # Send initial state immediately
-            await websocket.send(json.dumps(self.collector.get_state()))
+            await ws.send_str(json.dumps(self.collector.get_state()))
 
             # Keep connection alive and handle messages
-            async for message in websocket:
-                # Client messages (if any) - currently not used
-                pass
+            async for msg in ws:
+                if msg.type == WSMsgType.TEXT:
+                    # Client messages (if any) - currently not used
+                    pass
+                elif msg.type == WSMsgType.ERROR:
+                    print(f'[PanelServer] WebSocket error: {ws.exception()}')
 
-        except websockets.exceptions.ConnectionClosed:
-            pass
+        except Exception as e:
+            print(f"[PanelServer] Error: {e}")
         finally:
-            self.clients.remove(websocket)
-            print(f"[PanelServer] Client disconnected: {websocket.remote_address}")
+            self.clients.discard(ws)
+            print(f"[PanelServer] Client disconnected: {request.remote}")
+
+        return ws
 
     async def _on_data_update(self, state: dict):
         """Broadcast updated state to all connected clients."""
@@ -59,12 +79,30 @@ class PanelServer:
             return_exceptions=True
         )
 
-    async def _send_to_client(self, client: WebSocketServerProtocol, message: str):
+    async def _send_to_client(self, client: WebSocketResponse, message: str):
         """Send message to a single client."""
         try:
-            await client.send(message)
+            await client.send_str(message)
         except Exception as e:
             print(f"[PanelServer] Error sending to client: {e}")
+
+    async def start(self):
+        """Start the HTTP/WebSocket server and data collector."""
+        # Start data collector
+        await self.collector.start()
+
+        # Start HTTP server
+        runner = web.AppRunner(self.app)
+        await runner.setup()
+        site = web.TCPSite(runner, HOST, PORT)
+        await site.start()
+
+        print(f"[PanelServer] Server running on http://{HOST}:{PORT}")
+        print(f"[PanelServer] Open http://{HOST}:{PORT}/ in your browser")
+        print(f"[PanelServer] WebSocket endpoint: ws://{HOST}:{PORT}/ws")
+
+        # Run forever
+        await asyncio.Future()
 
 
 async def main():
