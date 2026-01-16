@@ -227,7 +227,9 @@ class aster(Exchange, ImplicitAPI):
         body: Any = None,
     ) -> Dict[str, Any]:
         params = params or {}
-        base_url = self.urls["api"][api]
+        # Map 'public' -> 'fapiPublic' and 'private' -> 'fapiPrivate'
+        api_key = "fapiPublic" if api == "public" else "fapiPrivate"
+        base_url = self.urls["api"][api_key]
         url = base_url + "/" + path
         query = None
         headers = headers or {}
