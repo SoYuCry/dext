@@ -1,5 +1,17 @@
 # -*- coding: utf-8 -*-
 
+"""
+Aster Exchange Implementation
+
+CCXT Pattern: Safe Data Access
+- Always use safe_* methods for dictionary access (never direct access)
+- safe_string(dict, 'key', default=None) - returns string or None
+- safe_integer(dict, 'key') - converts to int safely
+- safe_number(dict, 'key') - converts to float safely
+- safe_string_2(dict, 'key1', 'key2') - tries key1, then key2
+- Graceful handling of missing/null data with built-in type conversion
+"""
+
 import hashlib
 from typing import Any, Dict, List, Optional
 
