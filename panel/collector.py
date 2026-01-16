@@ -51,8 +51,8 @@ class DataCollector:
     async def start(self):
         """Start WebSocket subscriptions and polling tasks."""
         # Initialize REST clients
-        self.aster_client = get_client("aster", apiKey=ASTER_API_KEY, secret=ASTER_SECRET)
-        self.backpack_client = get_client("backpack", apiKey=BACKPACK_API_KEY, secret=BACKPACK_SECRET)
+        self.aster_client = get_client("aster", {"apiKey": ASTER_API_KEY, "secret": ASTER_SECRET})
+        self.backpack_client = get_client("backpack", {"apiKey": BACKPACK_API_KEY, "secret": BACKPACK_SECRET})
 
         # Start WebSocket subscriptions for user data (orders and fills)
         self.aster_ws = get_user_ws_client("aster", self._on_aster_event, api_key=ASTER_API_KEY)
