@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Panel - Aster & Backpack</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #333;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            color: #fff;
+        }
+
+        .status {
+            font-size: 16px;
+            margin-top: 10px;
+        }
+
+        .status.connected {
+            color: #4caf50;
+        }
+
+        .status.disconnected {
+            color: #f44336;
+        }
+
+        .section {
+            margin-bottom: 40px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #fff;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .two-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .exchange-box {
+            background-color: #252525;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #333;
+        }
+
+        .exchange-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #64b5f6;
+            border-bottom: 1px solid #444;
+            padding-bottom: 8px;
+        }
+
+        .position-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            padding: 5px;
+            background-color: #2a2a2a;
+            border-radius: 4px;
+        }
+
+        .position-label {
+            color: #aaa;
+        }
+
+        .position-value {
+            color: #fff;
+            font-weight: bold;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th {
+            background-color: #2a2a2a;
+            padding: 10px 8px;
+            text-align: left;
+            color: #aaa;
+            font-weight: bold;
+            border-bottom: 2px solid #444;
+        }
+
+        td {
+            padding: 8px;
+            border-bottom: 1px solid #333;
+        }
+
+        tr:hover {
+            background-color: #2a2a2a;
+        }
+
+        .buy {
+            color: #4caf50;
+            font-weight: bold;
+        }
+
+        .sell {
+            color: #f44336;
+            font-weight: bold;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #666;
+            padding: 20px;
+            font-style: italic;
+        }
+
+        .flash {
+            animation: flash-animation 0.5s ease;
+        }
+
+        @keyframes flash-animation {
+            0%, 100% { background-color: transparent; }
+            50% { background-color: #ffd54f; }
+        }
+
+        .maker {
+            color: #81c784;
+        }
+
+        .taker {
+            color: #e57373;
+        }
+
+        .timestamp {
+            font-size: 12px;
+            color: #666;
+        }
+
+        @media (max-width: 1200px) {
+            .two-column {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 Trading Panel - Aster & Backpack</h1>
+        <div id="status" class="status disconnected">🔴 Disconnected</div>
+        <div id="lastUpdate" class="timestamp">Last Update: Never</div>
+    </div>
+
+    <!-- Positions Section -->
+    <div class="section">
+        <div class="section-title">💰 Positions</div>
+        <div class="two-column">
+            <div class="exchange-box" id="asterPosition">
+                <div class="exchange-title">Aster (XAU/USDT)</div>
+                <div id="asterPositionContent">
+                    <div class="empty-state">Loading...</div>
+                </div>
+            </div>
+            <div class="exchange-box" id="backpackPosition">
+                <div class="exchange-title">Backpack (PAXG_USDC)</div>
+                <div id="backpackPositionContent">
+                    <div class="empty-state">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Orders Section -->
+    <div class="section">
+        <div class="section-title">📋 Open Orders</div>
+        <div class="two-column">
+            <div class="exchange-box">
+                <div class="exchange-title">Aster Orders</div>
+                <div id="asterOrders">
+                    <div class="empty-state">No open orders</div>
+                </div>
+            </div>
+            <div class="exchange-box">
+                <div class="exchange-title">Backpack Orders</div>
+                <div id="backpackOrders">
+                    <div class="empty-state">No open orders</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Fills Section -->
+    <div class="section">
+        <div class="section-title">💵 Recent Fills</div>
+        <div class="two-column">
+            <div class="exchange-box">
+                <div class="exchange-title">Aster Fills</div>
+                <div id="asterFills">
+                    <div class="empty-state">No recent fills</div>
+                </div>
+            </div>
+            <div class="exchange-box">
+                <div class="exchange-title">Backpack Fills</div>
+                <div id="backpackFills">
+                    <div class="empty-state">No recent fills</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let reconnectDelay = 1000;
+        const maxReconnectDelay = 8000;
+
+        function connect() {
+            ws = new WebSocket('ws://127.0.0.1:8765');
+
+            ws.onopen = () => {
+                console.log('Connected to server');
+                updateStatus(true);
+                reconnectDelay = 1000; // Reset delay on successful connection
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    updateUI(data);
+                } catch (error) {
+                    console.error('Error parsing message:', error);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('Disconnected from server');
+                updateStatus(false);
+                // Attempt to reconnect with exponential backoff
+                setTimeout(() => {
+                    console.log(`Reconnecting in ${reconnectDelay}ms...`);
+                    reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
+                    connect();
+                }, reconnectDelay);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        function updateStatus(connected) {
+            const statusEl = document.getElementById('status');
+            if (connected) {
+                statusEl.textContent = '🟢 Connected';
+                statusEl.className = 'status connected';
+            } else {
+                statusEl.textContent = '🔴 Disconnected';
+                statusEl.className = 'status disconnected';
+            }
+        }
+
+        function updateUI(data) {
+            // Update timestamp
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent =
+                `Last Update: ${now.toLocaleTimeString()}`;
+
+            // Update positions
+            updatePositions('aster', data.aster?.position);
+            updatePositions('backpack', data.backpack?.position);
+
+            // Update orders
+            updateOrders('aster', data.aster?.orders || []);
+            updateOrders('backpack', data.backpack?.orders || []);
+
+            // Update fills
+            updateFills('aster', data.aster?.fills || []);
+            updateFills('backpack', data.backpack?.fills || []);
+        }
+
+        function updatePositions(exchange, position) {
+            const contentEl = document.getElementById(`${exchange}PositionContent`);
+
+            if (!position) {
+                contentEl.innerHTML = '<div class="empty-state">No position data</div>';
+                return;
+            }
+
+            const total = position.total_balance || {};
+            const free = position.free || {};
+            const used = position.used || {};
+
+            // Get relevant assets
+            const assets = new Set([
+                ...Object.keys(total),
+                ...Object.keys(free),
+                ...Object.keys(used)
+            ]);
+
+            let html = '';
+            for (const asset of assets) {
+                const totalVal = total[asset] || 0;
+                const freeVal = free[asset] || 0;
+                const usedVal = used[asset] || 0;
+
+                // Skip assets with zero balance
+                if (totalVal === 0 && freeVal === 0 && usedVal === 0) continue;
+
+                html += `
+                    <div class="position-item">
+                        <span class="position-label">${asset}</span>
+                        <span class="position-value">${formatNumber(totalVal)}</span>
+                    </div>
+                    <div class="position-item" style="padding-left: 20px; font-size: 12px;">
+                        <span class="position-label">Free</span>
+                        <span class="position-value">${formatNumber(freeVal)}</span>
+                    </div>
+                    <div class="position-item" style="padding-left: 20px; font-size: 12px;">
+                        <span class="position-label">Used</span>
+                        <span class="position-value">${formatNumber(usedVal)}</span>
+                    </div>
+                `;
+            }
+
+            if (html === '') {
+                html = '<div class="empty-state">No positions</div>';
+            }
+
+            contentEl.innerHTML = html;
+            flashElement(contentEl);
+        }
+
+        function updateOrders(exchange, orders) {
+            const containerEl = document.getElementById(`${exchange}Orders`);
+
+            if (!orders || orders.length === 0) {
+                containerEl.innerHTML = '<div class="empty-state">No open orders</div>';
+                return;
+            }
+
+            let html = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Side</th>
+                            <th>Type</th>
+                            <th>Price</th>
+                            <th>Qty</th>
+                            <th>Filled</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            for (const order of orders) {
+                const side = order.side || 'N/A';
+                const sideClass = side.toLowerCase().includes('buy') ? 'buy' : 'sell';
+
+                html += `
+                    <tr>
+                        <td>${order.symbol || 'N/A'}</td>
+                        <td class="${sideClass}">${side}</td>
+                        <td>${order.order_type || order.type || 'N/A'}</td>
+                        <td>${formatNumber(order.price)}</td>
+                        <td>${formatNumber(order.orig_qty || order.amount)}</td>
+                        <td>${formatNumber(order.filled_qty || order.filled || 0)}</td>
+                        <td>${order.status || 'N/A'}</td>
+                    </tr>
+                `;
+            }
+
+            html += '</tbody></table>';
+            containerEl.innerHTML = html;
+            flashElement(containerEl);
+        }
+
+        function updateFills(exchange, fills) {
+            const containerEl = document.getElementById(`${exchange}Fills`);
+
+            if (!fills || fills.length === 0) {
+                containerEl.innerHTML = '<div class="empty-state">No recent fills</div>';
+                return;
+            }
+
+            let html = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Symbol</th>
+                            <th>Side</th>
+                            <th>Price</th>
+                            <th>Qty</th>
+                            <th>Fee</th>
+                            <th>M/T</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            for (const fill of fills.slice(0, 10)) {
+                const side = fill.side || 'N/A';
+                const sideClass = side.toLowerCase().includes('buy') ? 'buy' : 'sell';
+                const isMaker = fill.is_maker || false;
+                const makerTaker = isMaker ? 'M' : 'T';
+                const mtClass = isMaker ? 'maker' : 'taker';
+
+                // Format timestamp
+                let timeStr = 'N/A';
+                if (fill.ts_exchange) {
+                    const ts = fill.ts_exchange > 1e12 ? fill.ts_exchange / 1000 : fill.ts_exchange;
+                    const date = new Date(ts * 1000);
+                    timeStr = date.toLocaleTimeString();
+                }
+
+                html += `
+                    <tr>
+                        <td class="timestamp">${timeStr}</td>
+                        <td>${fill.symbol || 'N/A'}</td>
+                        <td class="${sideClass}">${side}</td>
+                        <td>${formatNumber(fill.last_price || fill.price)}</td>
+                        <td>${formatNumber(fill.last_qty || fill.amount)}</td>
+                        <td>${formatNumber(fill.fee)} ${fill.fee_asset || ''}</td>
+                        <td class="${mtClass}">${makerTaker}</td>
+                    </tr>
+                `;
+            }
+
+            html += '</tbody></table>';
+            containerEl.innerHTML = html;
+            flashElement(containerEl);
+        }
+
+        function formatNumber(value) {
+            if (value === null || value === undefined) return 'N/A';
+            const num = parseFloat(value);
+            if (isNaN(num)) return 'N/A';
+
+            // Format with appropriate decimal places
+            if (num === 0) return '0';
+            if (Math.abs(num) >= 1000) return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+            if (Math.abs(num) >= 1) return num.toFixed(4);
+            return num.toFixed(8);
+        }
+
+        function flashElement(element) {
+            element.classList.add('flash');
+            setTimeout(() => element.classList.remove('flash'), 500);
+        }
+
+        // Connect on page load
+        connect();
+    </script>
+</body>
+</html>
