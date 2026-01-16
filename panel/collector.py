@@ -51,8 +51,8 @@ class DataCollector:
     async def start(self):
         """Start WebSocket subscriptions and polling tasks."""
         # Initialize REST clients
-        self.aster_client = get_client("aster", {"apiKey": ASTER_API_KEY, "secret": ASTER_SECRET})
-        self.backpack_client = get_client("backpack", {"apiKey": BACKPACK_API_KEY, "secret": BACKPACK_SECRET})
+        self.aster_client = get_client("aster", apiKey=ASTER_API_KEY, secret=ASTER_SECRET)
+        self.backpack_client = get_client("backpack", apiKey=BACKPACK_API_KEY, secret=BACKPACK_SECRET)
 
         # Start WebSocket subscriptions for user data (orders and fills)
         self.aster_ws = get_user_ws_client("aster", self._on_aster_event, api_key=ASTER_API_KEY)
@@ -163,7 +163,9 @@ class DataCollector:
                 await self._notify_update()
 
             except Exception as e:
+                import traceback
                 print(f"[DataCollector] Error polling positions: {e}")
+                print(f"[DataCollector] Traceback: {traceback.format_exc()}")
 
             await asyncio.sleep(POSITION_UPDATE_INTERVAL)
 
@@ -190,7 +192,9 @@ class DataCollector:
                 # For simplicity, we trust WebSocket data more
 
             except Exception as e:
+                import traceback
                 print(f"[DataCollector] Error polling orders: {e}")
+                print(f"[DataCollector] Traceback: {traceback.format_exc()}")
 
             await asyncio.sleep(ORDER_UPDATE_INTERVAL)
 
