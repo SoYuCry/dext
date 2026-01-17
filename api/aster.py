@@ -146,6 +146,7 @@ class aster(Exchange, ImplicitAPI):
                         ],
                         "post": [
                             "fapi/v1/order",
+                            "fapi/v1/leverage",
                         ],
                         "delete": [
                             "fapi/v1/order",
@@ -655,6 +656,31 @@ class aster(Exchange, ImplicitAPI):
             request["limit"] = limit
         response = self.request("fapi/v1/userTrades", "private", "GET", self.extend(request, params))
         return self.parse_trades(response, market, since, limit)
+
+    def set_leverage(
+        self, leverage: int, symbol: Optional[str] = None, params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Set leverage for a symbol on Aster exchange.
+
+        Args:
+            leverage: Leverage multiplier (e.g., 5 for 5x)
+            symbol: Trading pair symbol (e.g., 'XAU/USDT')
+            params: Additional parameters
+
+        Returns:
+            Response from the exchange
+        """
+        if symbol is None:
+            raise ArgumentsRequired(self.id + " set_leverage() requires a symbol argument")
+        params = params or {}
+        self.load_markets()
+        market = self.market(symbol)
+        request = {
+            "symbol": market["id"],
+            "leverage": int(leverage),
+        }
+        response = self.request("fapi/v1/leverage", "private", "POST", self.extend(request, params))
+        return response
 
     def handle_errors(
         self,
