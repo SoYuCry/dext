@@ -5,6 +5,8 @@ from typing import Dict, List, Optional
 from logger import setup_logger
 from .exchanges import ExchangeWrapper
 from .feeds import PriceFeed
+from .exceptions import QuoteOrderFailed
+from .alerts import send_warning_alert
 
 logger = setup_logger("xau.quotes")
 
@@ -58,6 +60,7 @@ class QuoteManager:
 
         price = snap.mid
         new_orders: List[str] = []
+        failed_orders = 0  # 🔧 Track failed orders
 
         # Place orders for each tier (offset + size pair)
         for i, (off, size_usd) in enumerate(zip(self.price_offsets, self.order_sizes)):
@@ -79,6 +82,8 @@ class QuoteManager:
                 order = await self.exchange.create_limit_order(self.symbol, "buy", buy_contracts, buy_price)
                 if order:
                     new_orders.append(order.order_id)
+                else:
+                    failed_orders += 1  # 🔧 Count failure
             else:
                 new_orders.append(f"dry-buy-tier{i}")
                 logger.info(f"[dry-run] tier{i} buy ${size_usd:.1f} ({buy_contracts:.4f} XAU) @ {buy_price:.2f} (offset -{off*100:.2f}%)")
@@ -90,8 +95,28 @@ class QuoteManager:
                 order = await self.exchange.create_limit_order(self.symbol, "sell", sell_contracts, sell_price)
                 if order:
                     new_orders.append(order.order_id)
+                else:
+                    failed_orders += 1  # 🔧 Count failure
             else:
                 new_orders.append(f"dry-sell-tier{i}")
                 logger.info(f"[dry-run] tier{i} sell ${size_usd:.1f} ({sell_contracts:.4f} XAU) @ {sell_price:.2f} (offset +{off*100:.2f}%)")
 
         self.active_order_ids = new_orders
+        
+        # 🔧 Alert if too many failures
+        total_expected = len(self.order_sizes) * 2  # buy + sell
+        if failed_orders > 0:
+            failure_rate = failed_orders / total_expected
+            logger.warning(f"Quote cycle completed: {len(new_orders)}/{total_expected} orders placed ({failed_orders} failed)")
+            
+            if failure_rate >= 0.5:  # 50% or more failed
+                send_warning_alert(
+                    title="High Quote Failure Rate",
+                    message=f"{failed_orders}/{total_expected} quote orders failed (likely insufficient margin)",
+                    details={
+                        'failed': failed_orders,
+                        'total': total_expected,
+                        'placed': len(new_orders),
+                        'failure_rate': f"{failure_rate*100:.1f}%",
+                    }
+                )
