@@ -22,7 +22,7 @@ class StrategyConfig:
     backpack_symbol: str = "PAXG_USDC_PERP"
 
     # Quoting (multi-tier orders to catch big fingers)
-    order_sizes: List[float] = field(default_factory=lambda: [30.0, 30.0, 40.0])  # USD sizes: 30u, 30u, 40u
+    order_sizes: List[float] = field(default_factory=lambda: [10.0, 10.0, 15.0])  # USD sizes: 10u, 10u, 15u (total ~35u per side)
     price_offsets: List[float] = field(default_factory=lambda: [0.0015, 0.0025, 0.004])  # 0.15%/0.25%/0.40%
     quote_interval_sec: float = 10.0
 
