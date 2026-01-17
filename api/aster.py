@@ -585,16 +585,16 @@ class aster(Exchange, ImplicitAPI):
         }
         if type.lower() != "market":
             request["price"] = self.price_to_precision(symbol, price)
+            # For limit orders, timeInForce is mandatory on Aster
+            time_in_force = self.safe_string(params, "timeInForce", "GTC")
+            request["timeInForce"] = time_in_force
+            params = self.omit(params, "timeInForce")
         if amount is not None:
             request["quantity"] = self.amount_to_precision(symbol, amount)
         client_order_id = self.safe_string(params, "clientOrderId")
         if client_order_id:
             request["newClientOrderId"] = client_order_id
             params = self.omit(params, "clientOrderId")
-        time_in_force = self.safe_string(params, "timeInForce")
-        if time_in_force is not None:
-            request["timeInForce"] = time_in_force
-            params = self.omit(params, "timeInForce")
         reduce_only = self.safe_value(params, "reduceOnly")
         if reduce_only is not None:
             request["reduceOnly"] = reduce_only
