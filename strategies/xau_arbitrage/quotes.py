@@ -60,9 +60,14 @@ class QuoteManager:
         new_orders: List[str] = []
 
         # Place orders for each tier (offset + size pair)
-        for i, (off, size) in enumerate(zip(self.price_offsets, self.order_sizes)):
+        for i, (off, size_usd) in enumerate(zip(self.price_offsets, self.order_sizes)):
             buy_price = price * (1 - off)
             sell_price = price * (1 + off)
+
+            # Convert USD amount to contract amount
+            # size_usd is in USD, need to divide by price to get contracts
+            buy_contracts = size_usd / buy_price
+            sell_contracts = size_usd / sell_price
 
             # Enforce guardrail
             if len(new_orders) >= self.max_open_quotes:
@@ -71,22 +76,22 @@ class QuoteManager:
 
             # Place buy
             if not self.dry_run:
-                order = await self.exchange.create_limit_order(self.symbol, "buy", size, buy_price)
+                order = await self.exchange.create_limit_order(self.symbol, "buy", buy_contracts, buy_price)
                 if order:
                     new_orders.append(order.order_id)
             else:
                 new_orders.append(f"dry-buy-tier{i}")
-                logger.info(f"[dry-run] tier{i} buy ${size:.1f} @ {buy_price:.2f} (offset -{off*100:.2f}%)")
+                logger.info(f"[dry-run] tier{i} buy ${size_usd:.1f} ({buy_contracts:.4f} XAU) @ {buy_price:.2f} (offset -{off*100:.2f}%)")
 
             # Place sell
             if len(new_orders) >= self.max_open_quotes:
                 break
             if not self.dry_run:
-                order = await self.exchange.create_limit_order(self.symbol, "sell", size, sell_price)
+                order = await self.exchange.create_limit_order(self.symbol, "sell", sell_contracts, sell_price)
                 if order:
                     new_orders.append(order.order_id)
             else:
                 new_orders.append(f"dry-sell-tier{i}")
-                logger.info(f"[dry-run] tier{i} sell ${size:.1f} @ {sell_price:.2f} (offset +{off*100:.2f}%)")
+                logger.info(f"[dry-run] tier{i} sell ${size_usd:.1f} ({sell_contracts:.4f} XAU) @ {sell_price:.2f} (offset +{off*100:.2f}%)")
 
         self.active_order_ids = new_orders
