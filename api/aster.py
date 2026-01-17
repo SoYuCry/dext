@@ -591,7 +591,11 @@ class aster(Exchange, ImplicitAPI):
             request["timeInForce"] = time_in_force
             params = self.omit(params, "timeInForce")
         if amount is not None:
-            request["quantity"] = self.amount_to_precision(symbol, amount)
+            # Manual precision handling for amount
+            # Aster XAUUSDT has stepSize=0.001 (3 decimal places)
+            # amount_to_precision has a bug in TICK_SIZE mode, so we handle it manually
+            amount_str = f"{float(amount):.3f}"
+            request["quantity"] = amount_str
         client_order_id = self.safe_string(params, "clientOrderId")
         if client_order_id:
             request["newClientOrderId"] = client_order_id
