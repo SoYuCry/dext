@@ -65,24 +65,28 @@ class HedgeManager:
         
         # 🔧 CRITICAL: If hedge fails, stop strategy immediately
         if not order:
-            fill_info = {
+            primary_info = {
                 'order_id': fill.order_id,
                 'side': fill.side,
                 'qty': fill.qty,
                 'price': fill.price,
                 'symbol': fill.symbol,
             }
-            error_msg = f"Failed to place hedge order on {self.exchange.name}"
+            error_msg = f"Failed to place hedge order"
             
             # Send critical alert
             send_critical_alert(
                 title="HEDGE FAILED - SINGLE-SIDED EXPOSURE",
                 message=f"Aster {fill.side} {fill.qty} @ {fill.price} but Backpack hedge failed",
-                details=fill_info
+                details=primary_info
             )
             
             # Raise critical exception to stop strategy
-            raise HedgeFailed(fill_info=fill_info, error=error_msg)
+            raise HedgeFailed(
+                primary_info=primary_info,
+                hedge_exchange=self.exchange.name,
+                error=error_msg
+            )
         
         initial_order_id = order.order_id
         logger.info(f"hedge order placed {order.order_id} {hedge_side} {fill.qty} @ {limit_price}")
@@ -107,22 +111,26 @@ class HedgeManager:
             logger.info(f"hedge market order placed {mkt.order_id}")
         else:
             # 🔧 CRITICAL: Market order also failed
-            fill_info = {
+            primary_info = {
                 'order_id': fill.order_id,
                 'side': fill.side,
                 'qty': fill.qty,
                 'price': fill.price,
                 'symbol': fill.symbol,
             }
-            error_msg = f"Both limit and market hedge orders failed on {self.exchange.name}"
+            error_msg = f"Both limit and market hedge orders failed"
             
             send_critical_alert(
                 title="HEDGE FAILED - MARKET ORDER ALSO FAILED",
                 message=f"Aster {fill.side} {fill.qty} @ {fill.price}, all hedge attempts failed",
-                details=fill_info
+                details=primary_info
             )
             
-            raise HedgeFailed(fill_info=fill_info, error=error_msg)
+            raise HedgeFailed(
+                primary_info=primary_info,
+                hedge_exchange=self.exchange.name,
+                error=error_msg
+            )
 
 
     async def _wait_fill(self, order_id: str) -> bool:

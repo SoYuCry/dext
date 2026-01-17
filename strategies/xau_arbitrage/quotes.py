@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 from logger import setup_logger
 from .exchanges import ExchangeWrapper
 from .feeds import PriceFeed
-from .exceptions import QuoteOrderFailed
+from .exceptions import HighFailureRate
 from .alerts import send_warning_alert
 
 logger = setup_logger("xau.quotes")
