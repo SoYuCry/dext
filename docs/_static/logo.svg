@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60">
+  <defs>
+    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4aa"/>
+      <stop offset="100%" stop-color="#7b61ff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Icon and text on same baseline grid -->
+  <g transform="translate(0, 0)">
+    <!-- "d" mark: centered at (25, 30) -->
+    <path d="M12,10 L12,50 L28,50 C40,50 48,42 48,30 C48,18 40,10 28,10 Z"
+          fill="none" stroke="url(#g1)" stroke-width="4" stroke-linejoin="round"/>
+    <!-- Exchange arrows inside d -->
+    <line x1="20" y1="25" x2="36" y2="25" stroke="url(#g1)" stroke-width="2.5" stroke-linecap="round"/>
+    <polyline points="32,21 37,25 32,29" fill="none" stroke="url(#g1)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="36" y1="35" x2="20" y2="35" stroke="url(#g1)" stroke-width="2.5" stroke-linecap="round"/>
+    <polyline points="24,31 19,35 24,39" fill="none" stroke="url(#g1)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Wordmark: top-aligned to icon box -->
+  <text x="58" y="42" font-family="system-ui,-apple-system,'Segoe UI',sans-serif" font-size="36" font-weight="800" letter-spacing="-1" fill="white">dext</text>
+</svg>

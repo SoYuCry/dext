@@ -1,0 +1,37 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtualenvs
+venv/
+.venv/
+.venv*/
+
+# Logs / dumps / temp files
+*.log
+*.gz
+*.csv
+*.dll
+
+# Local env/config
+.env
+.env.*
+config.local.py
+
+# Archives / binaries
+*.zip
+*.tar.gz
+
+# Build / dist
+build/
+dist/

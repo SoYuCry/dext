@@ -1,0 +1,2 @@
+"""Endpoint configurations for exchanges."""
+

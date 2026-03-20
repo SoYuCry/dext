@@ -1,0 +1,6 @@
+PyNaCl
+requests
+curl_cffi
+numpy
+python-dotenv
+websockets>=11.0.0
