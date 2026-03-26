@@ -12,7 +12,7 @@ from .base.exchange import Exchange
 from .endpoints.variational import VariationalEndpoints
 from .base.errors import AuthenticationError
 from .proxy_utils import get_proxy_config
-from exchanges.logger import setup_logger
+from logger import setup_logger
 
 logger = setup_logger("exchanges.variational")
 
@@ -20,7 +20,7 @@ logger = setup_logger("exchanges.variational")
 # ---- Data Classes ----
 @dataclass
 class ApiResponse:
-    """Standardized API response format"""
+    """标准化API响应格式"""
     success: bool
     data: Optional[Any] = None
     error_code: Optional[str] = None
@@ -29,18 +29,18 @@ class ApiResponse:
 
 @dataclass
 class L1OrderbookInfo:
-    """Standardized L1 order book info (best bid/ask)"""
+    """标准化 L1 订单簿信息 (最佳买卖价)"""
     symbol: str
     exchange: str
     timestamp: int
-    bid: Decimal                    # Best bid price
-    ask: Decimal                    # Best ask price
-    bid_volume: Decimal             # Best bid volume
-    ask_volume: Decimal             # Best ask volume
-    mid: Decimal                    # Mid price = (bid + ask) / 2
-    spread: Decimal                 # Spread = ask - bid
-    spread_bps: Decimal             # Spread in basis points = (spread / mid) * 10000
-    # Optional fields
+    bid: Decimal                    # 最佳买价
+    ask: Decimal                    # 最佳卖价
+    bid_volume: Decimal             # 最佳买价数量
+    ask_volume: Decimal             # 最佳卖价数量
+    mid: Decimal                    # 中间价 = (bid + ask) / 2
+    spread: Decimal                 # 价差 = ask - bid
+    spread_bps: Decimal             # 价差基点 = (spread / mid) * 10000
+    # 可选字段
     mark_price: Optional[Decimal] = None
     index_price: Optional[Decimal] = None
     raw: Optional[Dict[str, Any]] = None
@@ -48,7 +48,7 @@ class L1OrderbookInfo:
 
 @dataclass
 class PositionInfo:
-    """Standardized position info"""
+    """标准化持仓信息"""
     symbol: str
     side: str  # "LONG", "SHORT", "FLAT"
     size: Decimal
@@ -78,7 +78,14 @@ def parse_indicative_quote(payload: Any) -> Tuple[str, Decimal, Decimal]:
 
 
 class VariationalClient(Exchange):
-    """Variational (Omni) RFQ client with Exchange base inheritance."""
+    """Variational (Omni) RFQ client with CCXT inheritance.
+
+    **EXPERIMENTAL / UNSTABLE** — This client uses cookie-based authentication
+    via browser impersonation (curl_cffi) because Variational has no official
+    API-key auth. Any change to their cookie format, CloudFlare policy, or
+    frontend session handling can break this client without warning. Do not
+    depend on it for unattended production workloads.
+    """
     endpoints = VariationalEndpoints()
 
     def __init__(self, config: Dict[str, Any]):
@@ -121,9 +128,9 @@ class VariationalClient(Exchange):
             self.session.proxies.update(proxies)
             logger.info("Variational client using proxies: %s", proxies)
 
-    # ---- Required exchange methods ----
+    # ---- CCXT required methods ----
     def describe(self) -> Dict[str, Any]:
-        """Exchange description."""
+        """CCXT exchange description."""
         return self.deep_extend(super().describe(), {
             "id": "variational",
             "name": "Variational (Omni)",
@@ -287,8 +294,6 @@ class VariationalClient(Exchange):
         data=None,
         retry_count: int = 3,
     ) -> Dict[str, Any]:
-        if instruction and not self.cookie:
-            raise AuthenticationError("Variational cookie not set for private request to " + endpoint)
         url = self._build_url(endpoint)
         headers = self._headers(instruction)
 
@@ -312,9 +317,9 @@ class VariationalClient(Exchange):
                     return {"error": text or f"HTTP {status}", "status_code": status}
                 try:
                     return resp.json()
-                except (ValueError, TypeError, KeyError):
+                except Exception:
                     return {"raw": resp.text}
-            except (OSError, ValueError, TypeError) as exc:  # noqa
+            except Exception as exc:  # noqa
                 logger.error("Variational request error: %s", exc)
                 if attempt >= retry_count:
                     return {"error": str(exc)}
@@ -465,7 +470,7 @@ class VariationalClient(Exchange):
             },
         )
 
-    # ---- Standardized thin wrappers ----
+    # ---- ccxt-style thin wrappers ----
     def create_order(self, symbol: str, type: str, side: str, amount: Any, price: Optional[Any] = None, params=None):
         """Alias compatible with strategy wrappers; symbol is ignored because Omni uses instrument tuples."""
         params = params or {}
@@ -489,45 +494,6 @@ class VariationalClient(Exchange):
             return ApiResponse(success=False, error_message=resp.get("error"), data=resp)
         return ApiResponse(success=True, data=resp)
 
-    def cancel_all_orders(self, symbol: Optional[str] = None, params: Optional[Dict[str, Any]] = None):
-        """Cancel all open orders, optionally filtered by symbol.
-
-        Fetches open orders via fetch_open_orders() and cancels each one individually.
-
-        Args:
-            symbol: Optional symbol filter (currently unused by Variational API)
-            params: Optional extra parameters (reserved for future use)
-
-        Returns:
-            List of ApiResponse results from each cancel_order() call
-        """
-        from .base.errors import ExchangeError, NetworkError, ExchangeNotAvailable
-
-        open_orders = self.fetch_open_orders(symbol=symbol)
-        if isinstance(open_orders, dict) and open_orders.get("error"):
-            logger.error("cancel_all_orders: failed to fetch open orders: %s", open_orders.get("error"))
-            return []
-
-        if not isinstance(open_orders, list):
-            open_orders = open_orders.get("orders", []) if isinstance(open_orders, dict) else []
-
-        results = []
-        for order in open_orders:
-            if not isinstance(order, dict):
-                continue
-            order_id = order.get("rfq_id") or order.get("order_id") or order.get("id")
-            if order_id is None:
-                continue
-            try:
-                results.append(self.cancel_order(str(order_id), symbol=symbol))
-            except (NetworkError, ExchangeNotAvailable) as exc:
-                logger.warning("cancel_order(%s) transient error: %s", order_id, exc)
-                continue
-            except ExchangeError as exc:
-                logger.error("cancel_order(%s) failed: %s", order_id, exc)
-                continue
-        return results
-
     def fetch_open_orders(self, symbol: Optional[str] = None) -> Any:
         return self.make_request("GET", "/orders/v2")
 
@@ -550,7 +516,7 @@ class VariationalClient(Exchange):
                 qty_raw = data.get("position_size") or data.get("qty")
             try:
                 qty = Decimal(str(qty_raw)) if qty_raw is not None else Decimal("0")
-            except (InvalidOperation, TypeError, ValueError):
+            except Exception:
                 qty = Decimal("0")
 
             side = ""
@@ -567,12 +533,12 @@ class VariationalClient(Exchange):
             try:
                 mp_raw = data.get("mark_price") or data.get("price")
                 mark_price = Decimal(str(mp_raw)) if mp_raw is not None else None
-            except (InvalidOperation, TypeError, ValueError):
+            except Exception:
                 mark_price = None
             try:
                 ep_raw = data.get("avg_entry_price") or data.get("entry_price")
                 entry_price = Decimal(str(ep_raw)) if ep_raw is not None else None
-            except (InvalidOperation, TypeError, ValueError):
+            except Exception:
                 entry_price = None
 
             positions.append(
@@ -642,14 +608,14 @@ class VariationalClient(Exchange):
         qty: Decimal = Decimal("0.05"),
         instrument: Optional[Dict[str, Any]] = None,
     ) -> ApiResponse:
-        """Fetch Variational L1 quote (single RFQ)
-
-        Variational uses RFQ mode, requiring an active quote request to obtain bid/ask
-
+        """獲取 Variational L1 報價（單次 RFQ）
+        
+        Variational 使用 RFQ 模式，需要主動詢價獲取 bid/ask
+        
         Args:
-            symbol: Ignored (Variational uses instrument)
-            qty: Quote quantity (base)
-            instrument: Contract specification
+            symbol: 忽略（Variational 使用 instrument）
+            qty: 報價數量（base）
+            instrument: 合約規格
         Returns:
             ApiResponse with data: L1OrderbookInfo
         """
@@ -660,7 +626,7 @@ class VariationalClient(Exchange):
         if not quote.success:
             return ApiResponse(
                 success=False,
-                error_message=f"Failed to fetch quote: {quote.error_message}",
+                error_message=f"獲取報價失敗: {quote.error_message}",
             )
 
         raw = (quote.data or {}).get("raw") or {}
@@ -669,7 +635,7 @@ class VariationalClient(Exchange):
         if bid_price is None or ask_price is None:
             return ApiResponse(
                 success=False,
-                error_message="Quote missing bid/ask",
+                error_message="報價缺少 bid/ask",
             )
         if not isinstance(bid_price, Decimal):
             bid_price = Decimal(str(bid_price))
@@ -682,7 +648,7 @@ class VariationalClient(Exchange):
         spread = ask_price - bid_price
         spread_bps = (spread / mid_price * 10000) if mid_price > 0 else Decimal(0)
         
-        # Build symbol
+        # 構建符號
         underlying = instrument.get("underlying", "ETH")
         settlement = instrument.get("settlement_asset", "USDC")
         symbol_str = f"{underlying}/{settlement}"
@@ -757,6 +723,6 @@ class VariationalClient(Exchange):
             raise ExchangeError(feedback)
 
 
-# Alias for compatibility
+# Alias for CCXT compatibility
 Variational = VariationalClient
 variational = VariationalClient
