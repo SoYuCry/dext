@@ -12,7 +12,7 @@ from .base.exchange import Exchange
 from .endpoints.variational import VariationalEndpoints
 from .base.errors import AuthenticationError
 from .proxy_utils import get_proxy_config
-from logger import setup_logger
+from exchanges.logger import setup_logger
 
 logger = setup_logger("exchanges.variational")
 

@@ -154,8 +154,8 @@ class Exchange(object):
     rateLimit = 2000  # milliseconds = seconds * 1000
     timeout = 10000   # milliseconds = seconds * 1000
     ssl_context = None
-    trust_env = False
-    requests_trust_env = False
+    trust_env = True
+    requests_trust_env = True
     session = None  # Session () by default
     verify = True  # SSL verification
     validateServerSsl = True
@@ -5383,11 +5383,19 @@ class Exchange(object):
     _async_client = None  # lazily initialized httpx.AsyncClient
 
     async def _get_async_client(self):
-        """Lazily create a shared httpx.AsyncClient."""
+        """Lazily create a shared httpx.AsyncClient.
+
+        Respects trust_env so that HTTP_PROXY / HTTPS_PROXY environment
+        variables are picked up automatically (same as the sync session).
+        """
         if self._async_client is None:
             import httpx
             timeout = httpx.Timeout(self.timeout / 1000, connect=self.timeout / 1000)
-            self._async_client = httpx.AsyncClient(timeout=timeout, verify=self.verify and self.validateServerSsl)
+            self._async_client = httpx.AsyncClient(
+                timeout=timeout,
+                verify=self.verify and self.validateServerSsl,
+                trust_env=self.trust_env,
+            )
         return self._async_client
 
     async def close_async(self):

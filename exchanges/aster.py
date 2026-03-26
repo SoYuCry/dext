@@ -60,7 +60,7 @@ class aster(Exchange):
                     "future": False,
                     "option": False,
                     "addMargin": False,
-                    "cancelAllOrders": False,
+                    "cancelAllOrders": True,
                     "cancelOrder": True,
                     "createOrder": True,
                     "fetchBalance": True,
@@ -633,6 +633,17 @@ class aster(Exchange):
         response = self._request(self.endpoints.privateDeleteFapiV1Order, self.extend(request, params))
         return self.parse_order(response, market)
 
+    def cancel_all_orders(
+        self, symbol: Optional[str] = None, params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        params = params or {}
+        if symbol is None:
+            raise ArgumentsRequired(self.id + " cancel_all_orders() requires a symbol argument")
+        self.load_markets()
+        market = self.market(symbol)
+        request: Dict[str, Any] = {"symbol": market["id"]}
+        return self._request(self.endpoints.privateDeleteFapiV1AllOpenOrders, self.extend(request, params))
+
     def fetch_order(self, id: str, symbol: Optional[str] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         params = params or {}
         if symbol is None:
@@ -767,6 +778,108 @@ class aster(Exchange):
 
         # If no match found, raise generic ExchangeError
         raise ExchangeError(feedback)
+
+
+    # =================================================================
+    # Async REST methods
+    # =================================================================
+    # These mirror the sync methods above but use _request_async()
+    # so callers in async contexts don't need asyncio.to_thread().
+
+    async def fetch_ticker_async(self, symbol: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        self.load_markets()
+        market = self.market(symbol)
+        request = {"symbol": market["id"]}
+        response = await self._request_async(self.endpoints.publicGetFapiV1Ticker24hr, self.extend(request, params or {}))
+        return self.parse_ticker(response, market)
+
+    async def fetch_balance_async(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        self.load_markets()
+        response = await self._request_async(self.endpoints.privateGetFapiV2Balance, params or {})
+        return self.parse_balance(response)
+
+    async def fetch_positions_async(self, symbols: Optional[List[str]] = None, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        self.load_markets()
+        response = await self._request_async(self.endpoints.privateGetFapiV2PositionRisk, params or {})
+        positions = self.parse_positions(response, symbols)
+        return self.filter_by_array(positions, 'symbol', symbols, False)
+
+    async def create_order_async(
+        self, symbol: str, type: str, side: str, amount: float,
+        price: Optional[float] = None, params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        params = params or {}
+        self.load_markets()
+        market = self.market(symbol)
+        request: Dict[str, Any] = {
+            "symbol": market["id"],
+            "side": side.upper(),
+            "type": type.upper(),
+        }
+        if type.lower() != "market":
+            request["price"] = self.price_to_precision(symbol, price)
+            time_in_force = self.safe_string(params, "timeInForce", "GTC")
+            request["timeInForce"] = time_in_force
+            params = self.omit(params, "timeInForce")
+        if amount is not None:
+            request["quantity"] = self.amount_to_precision(symbol, amount)
+        client_order_id = self.safe_string(params, "clientOrderId")
+        if client_order_id:
+            request["newClientOrderId"] = client_order_id
+            params = self.omit(params, "clientOrderId")
+        reduce_only = self.safe_value(params, "reduceOnly")
+        if reduce_only is not None:
+            request["reduceOnly"] = reduce_only
+            params = self.omit(params, "reduceOnly")
+        response = await self._request_async(self.endpoints.privatePostFapiV1Order, self.extend(request, params))
+        return self.parse_order(response, market)
+
+    async def cancel_order_async(
+        self, id: str, symbol: Optional[str] = None, params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        params = params or {}
+        if symbol is None:
+            raise ArgumentsRequired(self.id + " cancel_order_async() requires a symbol argument")
+        self.load_markets()
+        market = self.market(symbol)
+        request: Dict[str, Any] = {"symbol": market["id"], "orderId": id}
+        response = await self._request_async(self.endpoints.privateDeleteFapiV1Order, self.extend(request, params))
+        return self.parse_order(response, market)
+
+    async def cancel_all_orders_async(
+        self, symbol: Optional[str] = None, params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        params = params or {}
+        if symbol is None:
+            raise ArgumentsRequired(self.id + " cancel_all_orders_async() requires a symbol argument")
+        self.load_markets()
+        market = self.market(symbol)
+        request: Dict[str, Any] = {"symbol": market["id"]}
+        return await self._request_async(self.endpoints.privateDeleteFapiV1AllOpenOrders, self.extend(request, params))
+
+    async def fetch_order_async(self, id: str, symbol: Optional[str] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        params = params or {}
+        if symbol is None:
+            raise ArgumentsRequired(self.id + " fetch_order_async() requires a symbol argument")
+        self.load_markets()
+        market = self.market(symbol)
+        request = {"symbol": market["id"], "orderId": id}
+        response = await self._request_async(self.endpoints.privateGetFapiV1Order, self.extend(request, params))
+        return self.parse_order(response, market)
+
+    async def fetch_open_orders_async(
+        self, symbol: Optional[str] = None, since: Optional[int] = None,
+        limit: Optional[int] = None, params: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        params = params or {}
+        self.load_markets()
+        request: Dict[str, Any] = {}
+        market = None
+        if symbol is not None:
+            market = self.market(symbol)
+            request["symbol"] = market["id"]
+        response = await self._request_async(self.endpoints.privateGetFapiV1OpenOrders, self.extend(request, params))
+        return self.parse_orders(response, market, since, limit)
 
 
 # Uppercase export for ergonomics

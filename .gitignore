@@ -17,6 +17,9 @@ venv/
 .venv/
 .venv*/
 
+# Test reports
+tests/integration/reports/
+
 # Logs / dumps / temp files
 *.log
 *.gz
