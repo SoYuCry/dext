@@ -1408,130 +1408,6 @@ class Exchange(object):
         return Exchange.decode(base64.b64decode(s))
 
     @staticmethod
-    def jwt(request, secret, algorithm='sha256', is_rsa=False, opts={}):
-        algos = {
-            'sha256': hashlib.sha256,
-            'sha384': hashlib.sha384,
-            'sha512': hashlib.sha512,
-        }
-        alg = ('RS' if is_rsa else 'HS') + algorithm[3:]
-        if 'alg' in opts and opts['alg'] is not None:
-            alg = opts['alg']
-        header_opts = {
-            'alg': alg,
-            'typ': 'JWT',
-        }
-        if 'kid' in opts and opts['kid'] is not None:
-            header_opts['kid'] = opts['kid']
-        if 'nonce' in opts and opts['nonce'] is not None:
-            header_opts['nonce'] = opts['nonce']
-        header = Exchange.encode(Exchange.json(header_opts))
-        encoded_header = Exchange.urlencode_base64(header)
-        encoded_data = Exchange.urlencode_base64(Exchange.encode(Exchange.json(request)))
-        token = encoded_header + '.' + encoded_data
-        algoType = alg[0:2]
-        if is_rsa or algoType == 'RS':
-            signature = Exchange.base64_to_binary(Exchange.rsa(token, Exchange.decode(secret), algorithm))
-        elif algoType == 'ES':
-            rawSignature = Exchange.ecdsa(token, secret, 'p256', algorithm)
-            signature = Exchange.base16_to_binary(rawSignature['r'].rjust(64, "0") + rawSignature['s'].rjust(64, "0"))
-        elif algoType == 'Ed':
-            signature = Exchange.eddsa(token.encode('utf-8'), secret, 'ed25519', True)
-            # here the signature is already a urlencoded base64-encoded string
-            return token + '.' + signature
-        else:
-            signature = Exchange.hmac(Exchange.encode(token), secret, algos[algorithm], 'binary')
-        return token + '.' + Exchange.urlencode_base64(signature)
-
-    @staticmethod
-    def rsa(request, secret, alg='sha256'):
-        algorithms = {
-            "sha256": hashes.SHA256(),
-            "sha384": hashes.SHA384(),
-            "sha512": hashes.SHA512(),
-        }
-        algorithm = algorithms[alg]
-        priv_key = load_pem_private_key(Exchange.encode(secret), None, backends.default_backend())
-        return Exchange.binary_to_base64(priv_key.sign(Exchange.encode(request), padding.PKCS1v15(), algorithm))
-
-    @staticmethod
-    def eth_abi_encode(types, args):
-        return abi.encode(types, args)
-
-    @staticmethod
-    def eth_encode_structured_data(domain, messageTypes, message):
-        encodedData = account.messages.encode_typed_data(domain, messageTypes, message)
-        return Exchange.binary_concat(b"\x19\x01", encodedData.header, encodedData.body)
-
-    @staticmethod
-    def eth_get_address_from_private_key(private_key):
-        # method returns the Ethereum address from a "0x"-prefixed private key
-        # Remove "0x" prefix if present
-        clean_private_key = Exchange.remove0x_prefix(private_key)
-        # Use coincurve to get the public key
-        private_key_obj = coincurve.PrivateKey(bytes.fromhex(clean_private_key))
-        # Get uncompressed public key (remove the 0x04 prefix)
-        public_key_bytes = private_key_obj.public_key.format(compressed=False)[1:]
-        # Hash the public key with Keccak256
-        address_bytes = keccak.SHA3(public_key_bytes)[-20:]
-        # Convert to hex and add 0x prefix
-        address_hex = '0x' + address_bytes.hex()
-        return address_hex
-
-    @staticmethod
-    def retrieve_stark_account (signature, accountClassHash, accountProxyClassHash):
-        privateKey = get_private_key_from_eth_signature(signature)
-        publicKey = private_to_stark_key(privateKey)
-        calldata = [
-            int(accountClassHash, 16),
-            get_selector_from_name("initialize"),
-            2,
-            publicKey,
-            0,
-        ]
-
-        address = compute_address(
-            class_hash=int(accountProxyClassHash, 16),
-            constructor_calldata=calldata,
-            salt=publicKey,
-        )
-        return {
-            'privateKey': privateKey,
-            'publicKey': hex(publicKey),
-            'address': hex(address)
-        }
-
-    @staticmethod
-    def starknet_encode_structured_data (domain, messageTypes, messageData, address):
-        types = list(messageTypes.keys())
-        if len(types) > 1:
-            raise NotSupported('starknetEncodeStructuredData only support single type')
-
-        request = {
-            'domain': domain,
-            'primaryType': types[0],
-            'types': Exchange.extend({
-                'StarkNetDomain': [
-                    {'name': "name", 'type': "felt"},
-                    {'name': "chainId", 'type': "felt"},
-                    {'name': "version", 'type': "felt"},
-                ],
-            }, messageTypes),
-            'message': messageData,
-        }
-        typedDataClass = TypedDataDataclass.from_dict(request)
-        msgHash = typedDataClass.message_hash(int(address, 16))
-        return msgHash
-
-    @staticmethod
-    def starknet_sign (msg_hash, pri):
-        # // TODO: unify to ecdsa
-        if isinstance(pri, str):
-            pri = int(pri, 16)
-        r, s = message_signature(msg_hash, pri)
-        return Exchange.json([hex(r), hex(s)])
-
-    @staticmethod
     def packb(o):
         return packb(o)
 
@@ -1543,123 +1419,6 @@ class Exchange(object):
     def random_bytes(length):
         return format(random.getrandbits(length * 8), 'x')
 
-    @staticmethod
-    def ecdsa(request, secret, algorithm='p256', hash=None, fixed_length=False):
-        """
-        ECDSA signing with support for multiple algorithms and coincurve for SECP256K1.
-        Args:
-            request: The message to sign
-            secret: The private key (hex string or PEM format)
-            algorithm: The elliptic curve algorithm ('p192', 'p224', 'p256', 'p384', 'p521', 'secp256k1')
-            hash: The hash function to use (defaults to algorithm-specific hash)
-            fixed_length: Whether to ensure fixed-length signatures (for deterministic signing)
-            Note: coincurve produces non-deterministic signatures
-        Returns:
-            dict: {'r': r_value, 's': s_value, 'v': v_value}
-        Note:
-            If coincurve is not available or fails for SECP256K1, the method automatically
-            falls back to the standard ecdsa implementation.
-        """
-        # your welcome - frosty00
-        algorithms = {
-            'p192': [ecdsa.NIST192p, 'sha256'],
-            'p224': [ecdsa.NIST224p, 'sha256'],
-            'p256': [ecdsa.NIST256p, 'sha256'],
-            'p384': [ecdsa.NIST384p, 'sha384'],
-            'p521': [ecdsa.NIST521p, 'sha512'],
-            'secp256k1': [ecdsa.SECP256k1, 'sha256'],
-        }
-        if algorithm not in algorithms:
-            raise ArgumentsRequired(algorithm + ' is not a supported algorithm')
-        # Use coincurve for SECP256K1 if available
-        if algorithm == 'secp256k1' and coincurve is not None:
-            try:
-                return Exchange._ecdsa_secp256k1_coincurve(request, secret, hash, fixed_length)
-            except Exception:
-                # If coincurve fails, fall back to ecdsa implementation
-                pass
-        # Fall back to original ecdsa implementation for other algorithms or when deterministic signing is needed
-        curve_info = algorithms[algorithm]
-        hash_function = getattr(hashlib, curve_info[1])
-        encoded_request = Exchange.encode(request)
-        if hash is not None:
-            digest = Exchange.hash(encoded_request, hash, 'binary')
-        else:
-            digest = base64.b16decode(encoded_request, casefold=True)
-        if isinstance(secret, str):
-            secret = Exchange.encode(secret)
-        if secret.find(b'-----BEGIN EC PRIVATE KEY-----') > -1:
-            key = ecdsa.SigningKey.from_pem(secret, hash_function)
-        else:
-            key = ecdsa.SigningKey.from_string(base64.b16decode(secret,
-                                                            casefold=True), curve=curve_info[0])
-        r_binary, s_binary, v = key.sign_digest_deterministic(digest, hashfunc=hash_function,
-                                                              sigencode=ecdsa.util.sigencode_strings_canonize)
-        r_int, s_int = ecdsa.util.sigdecode_strings((r_binary, s_binary), key.privkey.order)
-        counter = 0
-        minimum_size = (1 << (8 * 31)) - 1
-        half_order = key.privkey.order / 2
-        while fixed_length and (r_int > half_order or r_int <= minimum_size or s_int <= minimum_size):
-            r_binary, s_binary, v = key.sign_digest_deterministic(digest, hashfunc=hash_function,
-                                                                  sigencode=ecdsa.util.sigencode_strings_canonize,
-                                                                  extra_entropy=Exchange.number_to_le(counter, 32))
-            r_int, s_int = ecdsa.util.sigdecode_strings((r_binary, s_binary), key.privkey.order)
-            counter += 1
-        r, s = Exchange.decode(base64.b16encode(r_binary)).lower(), Exchange.decode(base64.b16encode(s_binary)).lower()
-        return {
-            'r': r,
-            's': s,
-            'v': v,
-        }
-
-
-    @staticmethod
-    def _ecdsa_secp256k1_coincurve(request, secret, hash=None, fixed_length=False):
-        """
-        Use coincurve library for SECP256K1 ECDSA signing.
-        This method provides faster SECP256K1 signing using the coincurve library,
-        which is a Python binding to libsecp256k1. This implementation produces
-        deterministic signatures (RFC 6979) using coincurve's sign_recoverable method.
-        Args:
-            request: The message to sign
-            secret: The private key (hex string or PEM format)
-            hash: The hash function to use
-            fixed_length: Not used in coincurve implementation (signatures are always fixed length)
-        Returns:
-            dict: {'r': r_value, 's': s_value, 'v': v_value}
-        Raises:
-            ArgumentsRequired: If coincurve library is not available
-        """
-        encoded_request = Exchange.encode(request)
-        if hash is not None:
-            digest = Exchange.hash(encoded_request, hash, 'binary')
-        else:
-            digest = base64.b16decode(encoded_request, casefold=True)
-        if isinstance(secret, str):
-            secret = Exchange.encode(secret)
-        # Handle PEM format
-        if secret.find(b'-----BEGIN EC PRIVATE KEY-----') > -1:
-            secret = base64.b16decode(secret.replace(b'-----BEGIN EC PRIVATE KEY-----', b'').replace(b'-----END EC PRIVATE KEY-----', b'').replace(b'\n', b'').replace(b'\r', b''), casefold=True)
-        else:
-            # Assume hex format
-            secret = base64.b16decode(secret, casefold=True)
-        # Create coincurve PrivateKey
-        private_key = coincurve.PrivateKey(secret)
-        # Sign the digest using sign_recoverable which produces deterministic signatures (RFC 6979)
-        # The signature format is: 32 bytes r + 32 bytes s + 1 byte recovery_id (v)
-        signature = private_key.sign_recoverable(digest, hasher=None)
-        # Extract r, s, and v from the recoverable signature (65 bytes total)
-        r_binary = signature[:32]
-        s_binary = signature[32:64]
-        v = signature[64]
-        # Convert to hex strings
-        r = Exchange.decode(base64.b16encode(r_binary)).lower()
-        s = Exchange.decode(base64.b16encode(s_binary)).lower()
-        return {
-            'r': r,
-            's': s,
-            'v': v,
-        }
 
     def binary_to_urlencoded_base64(data: bytes) -> str:
         encoded = base64.urlsafe_b64encode(data).decode("utf-8")
@@ -1675,14 +1434,6 @@ class Exchange(object):
             return Exchange.binary_to_urlencoded_base64(signature)
 
         return Exchange.binary_to_base64(signature)
-
-    @staticmethod
-    def axolotl(request, secret, curve='ed25519'):
-        random = b'\x00' * 64
-        request = base64.b16decode(request, casefold=True)
-        secret = base64.b16decode(secret, casefold=True)
-        signature = eddsa.calculateSignature(random, secret, request)
-        return Exchange.binary_to_base58(signature)
 
     @staticmethod
     def json(data, params=None):
@@ -1800,18 +1551,6 @@ class Exchange(object):
         # and may be changed for consistency later
         return self.currencies
 
-    def fetch_fees(self):
-        trading = {}
-        funding = {}
-        if self.has['fetchTradingFees']:
-            trading = self.fetch_trading_fees()
-        if self.has['fetchFundingFees']:
-            funding = self.fetch_funding_fees()
-        return {
-            'trading': trading,
-            'funding': funding,
-        }
-
     @staticmethod
     def parse_timeframe(timeframe):
         amount = int(timeframe[0:-1])
@@ -1843,16 +1582,6 @@ class Exchange(object):
 
     def vwap(self, baseVolume, quoteVolume):
         return (quoteVolume / baseVolume) if (quoteVolume is not None) and (baseVolume is not None) and (baseVolume > 0) else None
-
-    def check_required_dependencies(self):
-        if self.requiresEddsa and eddsa is None:
-            raise NotSupported(self.id + ' Eddsa functionality requires python-axolotl-curve25519, install with `pip install python-axolotl-curve25519==0.4.1.post2`: https://github.com/tgalal/python-axolotl-curve25519')
-
-    def privateKeyToAddress(self, privateKey):
-        private_key_bytes = base64.b16decode(Exchange.encode(privateKey), True)
-        public_key_bytes = ecdsa.SigningKey.from_string(private_key_bytes, curve=ecdsa.SECP256k1).verifying_key.to_string()
-        public_key_hash = keccak.SHA3(public_key_bytes)
-        return '0x' + Exchange.decode(base64.b16encode(public_key_hash))[-40:].lower()
 
     @staticmethod
     def remove0x_prefix(value):
@@ -1963,14 +1692,6 @@ class Exchange(object):
             ErrorClass = self.httpExceptions[codeAsString]
             raise ErrorClass(self.id + ' ' + method + ' ' + url + ' ' + codeAsString + ' ' + reason + ' ' + body)
 
-    @staticmethod
-    def crc32(string, signed=False):
-        unsigned = binascii.crc32(string.encode('utf8'))
-        if signed and (unsigned >= 0x80000000):
-            return unsigned - 0x100000000
-        else:
-            return unsigned
-
     def clone(self, obj):
         return obj if isinstance(obj, list) else self.extend(obj)
 
@@ -2033,123 +1754,8 @@ class Exchange(object):
     def binary_length(self, binary):
         return len(binary)
 
-    def get_zk_contract_signature_obj(self, seeds: str, params={}):
-        raise NotSupported(self.id + ' apex zk signature helpers are disabled in this build')
-
-    def get_zk_transfer_signature_obj(self, seeds: str, params={}):
-        raise NotSupported(self.id + ' apex zk signature helpers are disabled in this build')
-
     def is_binary_message(self, message):
         return isinstance(message, bytes) or isinstance(message, bytearray)
-
-    def retrieve_dydx_credentials(self, entropy):
-        mnemo = Mnemonic("english")
-        if ' ' in entropy:
-            mnemonic = entropy
-        else:
-            mnemonic = mnemo.to_mnemonic(self.base16_to_binary(entropy))
-        seed = mnemo.to_seed(mnemonic)
-        keyPair = Bip44.FromSeed(seed).DeriveDefaultPath()
-        privateKey = keyPair.PrivateKey().Raw().ToBytes()
-        publicKey = keyPair.PublicKey().RawCompressed().ToBytes()
-        return {
-            'mnemonic': mnemonic,
-            'privateKey': privateKey,
-            'publicKey': publicKey,
-        }
-
-    def load_dydx_protos(self):
-        return
-
-    def to_dydx_long(self, num):
-        return num
-
-    def encode_dydx_tx_for_simulation(self, message, memo, sequence, publicKey):
-        if not encode_as_any:
-            raise NotSupported(self.id + ' requires protobuf to encode messages, please install it with `pip install "protobuf==5.29.5"`')
-        messages = [
-            encode_as_any(
-                message,
-            )
-        ]
-        body = TxBody(
-            messages=messages,
-            memo=memo,
-        )
-        auth_info = AuthInfo(
-            signer_infos=[
-                SignerInfo(
-                    public_key=encode_as_any({
-                        'typeUrl': '/cosmos.crypto.secp256k1.PubKey',
-                        'value': publicKey,
-                    }),
-                    sequence=self.parse_to_int(sequence),
-                    mode_info=ModeInfo(single=ModeInfo.Single(mode=SignMode.SIGN_MODE_UNSPECIFIED))
-                )
-            ],
-            fee={},
-        )
-        tx = Tx(body=body, auth_info=auth_info, signatures=[b''])
-        return self.binary_to_base64(tx.SerializeToString())
-
-    def encode_dydx_tx_for_signing(self, message, memo, chainId, account, authenticators, fee=None):
-        if not encode_as_any:
-            raise NotSupported(self.id + ' requires protobuf to encode messages, please install it with `pip install "protobuf==5.29.5"`')
-        if fee is None:
-            fee = {
-                'amount': [],
-                'gasLimit': 1000000,
-            }
-        non_critical_extension_options = []
-        if authenticators is not None:
-            non_critical_extension_options.append(encode_as_any({
-                'typeUrl': '/dydxprotocol.accountplus.TxExtension',
-                'value': {
-                    'selected_authenticators': authenticators
-                }
-            }))
-        messages = [
-            encode_as_any(
-                message
-            )
-        ]
-        sequence = self.milliseconds()
-        body = TxBody(
-            messages=messages,
-            memo=memo,
-            non_critical_extension_options=non_critical_extension_options,
-        )
-        auth_info = AuthInfo(
-            signer_infos=[
-                SignerInfo(
-                    public_key=encode_as_any({
-                        'typeUrl': '/cosmos.crypto.secp256k1.PubKey',
-                        'value': account['pub_key'],
-                    }),
-                    sequence=self.parse_to_int(sequence),
-                    mode_info=ModeInfo(single=ModeInfo.Single(mode=SignMode.SIGN_MODE_DIRECT))
-                )
-            ],
-            fee=Fee(amount=fee['amount'], gas_limit=fee['gasLimit']),
-        )
-        signDoc = SignDoc(
-            account_number=self.parse_to_int(account['account_number']),
-            auth_info_bytes=auth_info.SerializeToString(),
-            body_bytes=body.SerializeToString(),
-            chain_id=chainId,
-        )
-        signingHash = self.hash(signDoc.SerializeToString(), 'sha256', 'hex')
-        return [signingHash, signDoc]
-
-    def encode_dydx_tx_raw(self, signDoc, signature):
-        if not encode_as_any:
-            raise NotSupported(self.id + ' requires protobuf to encode messages, please install it with `pip install "protobuf==5.29.5"`')
-        tx = TxRaw(
-            auth_info_bytes=signDoc.auth_info_bytes,
-            body_bytes=signDoc.body_bytes,
-            signatures=[self.base16ToBinary(signature)],
-        )
-        return '0x' + self.binary_to_base16(tx.SerializeToString())
 
     def lock_id(self):
         return None
@@ -2836,113 +2442,14 @@ class Exchange(object):
             # set flag
             self.isSandboxModeEnabled = False
 
-    def enable_demo_trading(self, enable: bool):
-        """
-        enables or disables demo trading mode
-        :param boolean [enable]: True if demo trading should be enabled, False otherwise
-        """
-        if self.isSandboxModeEnabled:
-            raise NotSupported(self.id + ' demo trading does not support in sandbox environment. Please check https://www.binance.com/en/support/faq/detail/9be58f73e5e14338809e3b705b9687dd to see the differences')
-        if enable:
-            self.urls['apiBackupDemoTrading'] = self.urls['api']
-            self.urls['api'] = self.urls['demo']
-        elif 'apiBackupDemoTrading' in self.urls:
-            self.urls['api'] = self.urls['apiBackupDemoTrading']
-            newUrls = self.omit(self.urls, 'apiBackupDemoTrading')
-            self.urls = newUrls
-        self.options['enableDemoTrading'] = enable
-
     def sign(self, path, api: Any = 'public', method='GET', params={}, headers: Any = None, body: Any = None):
         return {}
-
-    def fetch_accounts(self, params={}):
-        raise NotSupported(self.id + ' fetchAccounts() is not supported yet')
 
     def fetch_trades(self, symbol: str, since: Int = None, limit: Int = None, params={}):
         raise NotSupported(self.id + ' fetchTrades() is not supported yet')
 
-    def fetch_trades_ws(self, symbol: str, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchTradesWs() is not supported yet')
-
-    def watch_liquidations(self, symbol: str, since: Int = None, limit: Int = None, params={}):
-        if self.has['watchLiquidationsForSymbols']:
-            return self.watch_liquidations_for_symbols([symbol], since, limit, params)
-        raise NotSupported(self.id + ' watchLiquidations() is not supported yet')
-
-    def watch_liquidations_for_symbols(self, symbols: List[str], since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchLiquidationsForSymbols() is not supported yet')
-
-    def watch_my_liquidations(self, symbol: str, since: Int = None, limit: Int = None, params={}):
-        if self.has['watchMyLiquidationsForSymbols']:
-            return self.watch_my_liquidations_for_symbols([symbol], since, limit, params)
-        raise NotSupported(self.id + ' watchMyLiquidations() is not supported yet')
-
-    def watch_my_liquidations_for_symbols(self, symbols: List[str], since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchMyLiquidationsForSymbols() is not supported yet')
-
-    def watch_trades(self, symbol: str, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchTrades() is not supported yet')
-
-    def un_watch_orders(self, symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' unWatchOrders() is not supported yet')
-
-    def un_watch_trades(self, symbol: str, params={}):
-        raise NotSupported(self.id + ' unWatchTrades() is not supported yet')
-
-    def watch_trades_for_symbols(self, symbols: List[str], since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchTradesForSymbols() is not supported yet')
-
-    def un_watch_trades_for_symbols(self, symbols: List[str], params={}):
-        raise NotSupported(self.id + ' unWatchTradesForSymbols() is not supported yet')
-
-    def watch_my_trades_for_symbols(self, symbols: List[str], since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchMyTradesForSymbols() is not supported yet')
-
-    def watch_orders_for_symbols(self, symbols: List[str], since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchOrdersForSymbols() is not supported yet')
-
-    def watch_ohlcv_for_symbols(self, symbolsAndTimeframes: List[List[str]], since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchOHLCVForSymbols() is not supported yet')
-
-    def un_watch_ohlcv_for_symbols(self, symbolsAndTimeframes: List[List[str]], params={}):
-        raise NotSupported(self.id + ' unWatchOHLCVForSymbols() is not supported yet')
-
-    def watch_order_book_for_symbols(self, symbols: List[str], limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchOrderBookForSymbols() is not supported yet')
-
-    def un_watch_order_book_for_symbols(self, symbols: List[str], params={}):
-        raise NotSupported(self.id + ' unWatchOrderBookForSymbols() is not supported yet')
-
-    def un_watch_positions(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' unWatchPositions() is not supported yet')
-
-    def un_watch_ticker(self, symbol: str, params={}):
-        raise NotSupported(self.id + ' unWatchTicker() is not supported yet')
-
-    def un_watch_mark_price(self, symbol: str, params={}):
-        raise NotSupported(self.id + ' unWatchMarkPrice() is not supported yet')
-
-    def un_watch_mark_prices(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' unWatchMarkPrices() is not supported yet')
-
-    def fetch_deposit_addresses(self, codes: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchDepositAddresses() is not supported yet')
-
     def fetch_order_book(self, symbol: str, limit: Int = None, params={}):
         raise NotSupported(self.id + ' fetchOrderBook() is not supported yet')
-
-    def fetch_order_book_ws(self, symbol: str, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchOrderBookWs() is not supported yet')
-
-    def fetch_margin_mode(self, symbol: str, params={}):
-        if self.has['fetchMarginModes']:
-            marginModes = self.fetch_margin_modes([symbol], params)
-            return self.safe_dict(marginModes, symbol)
-        else:
-            raise NotSupported(self.id + ' fetchMarginMode() is not supported yet')
-
-    def fetch_margin_modes(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchMarginModes() is not supported yet')
 
     def fetch_rest_order_book_safe(self, symbol, limit=None, params={}):
         fetchSnapshotMaxRetries = self.handle_option('watchOrderBook', 'maxRetries', 3)
@@ -2954,18 +2461,6 @@ class Exchange(object):
                 if (i + 1) == fetchSnapshotMaxRetries:
                     raise e
         return None
-
-    def watch_order_book(self, symbol: str, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchOrderBook() is not supported yet')
-
-    def un_watch_order_book(self, symbol: str, params={}):
-        raise NotSupported(self.id + ' unWatchOrderBook() is not supported yet')
-
-    def fetch_time(self, params={}):
-        raise NotSupported(self.id + ' fetchTime() is not supported yet')
-
-    def fetch_trading_limits(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchTradingLimits() is not supported yet')
 
     def parse_currency(self, rawCurrency: dict):
         raise NotSupported(self.id + ' parseCurrency() is not supported yet')
@@ -3000,141 +2495,11 @@ class Exchange(object):
     def parse_transaction(self, transaction: dict, currency: Currency = None):
         raise NotSupported(self.id + ' parseTransaction() is not supported yet')
 
-    def parse_transfer(self, transfer: dict, currency: Currency = None):
-        raise NotSupported(self.id + ' parseTransfer() is not supported yet')
-
-    def parse_account(self, account: dict):
-        raise NotSupported(self.id + ' parseAccount() is not supported yet')
-
-    def parse_ledger_entry(self, item: dict, currency: Currency = None):
-        raise NotSupported(self.id + ' parseLedgerEntry() is not supported yet')
-
     def parse_order(self, order: dict, market: Market = None):
         raise NotSupported(self.id + ' parseOrder() is not supported yet')
 
-    def fetch_cross_borrow_rates(self, params={}):
-        raise NotSupported(self.id + ' fetchCrossBorrowRates() is not supported yet')
-
-    def fetch_isolated_borrow_rates(self, params={}):
-        raise NotSupported(self.id + ' fetchIsolatedBorrowRates() is not supported yet')
-
-    def parse_market_leverage_tiers(self, info, market: Market = None):
-        raise NotSupported(self.id + ' parseMarketLeverageTiers() is not supported yet')
-
-    def fetch_leverage_tiers(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchLeverageTiers() is not supported yet')
-
     def parse_position(self, position: dict, market: Market = None):
         raise NotSupported(self.id + ' parsePosition() is not supported yet')
-
-    def parse_funding_rate_history(self, info, market: Market = None):
-        raise NotSupported(self.id + ' parseFundingRateHistory() is not supported yet')
-
-    def parse_borrow_interest(self, info: dict, market: Market = None):
-        raise NotSupported(self.id + ' parseBorrowInterest() is not supported yet')
-
-    def parse_isolated_borrow_rate(self, info: dict, market: Market = None):
-        raise NotSupported(self.id + ' parseIsolatedBorrowRate() is not supported yet')
-
-    def parse_ws_trade(self, trade: dict, market: Market = None):
-        raise NotSupported(self.id + ' parseWsTrade() is not supported yet')
-
-    def parse_ws_order(self, order: dict, market: Market = None):
-        raise NotSupported(self.id + ' parseWsOrder() is not supported yet')
-
-    def parse_ws_order_trade(self, trade: dict, market: Market = None):
-        raise NotSupported(self.id + ' parseWsOrderTrade() is not supported yet')
-
-    def parse_ws_ohlcv(self, ohlcv, market: Market = None):
-        return self.parse_ohlcv(ohlcv, market)
-
-    def fetch_funding_rates(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchFundingRates() is not supported yet')
-
-    def fetch_funding_intervals(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchFundingIntervals() is not supported yet')
-
-    def watch_funding_rate(self, symbol: str, params={}):
-        raise NotSupported(self.id + ' watchFundingRate() is not supported yet')
-
-    def watch_funding_rates(self, symbols: List[str], params={}):
-        raise NotSupported(self.id + ' watchFundingRates() is not supported yet')
-
-    def watch_funding_rates_for_symbols(self, symbols: List[str], params={}):
-        return self.watch_funding_rates(symbols, params)
-
-    def transfer(self, code: str, amount: float, fromAccount: str, toAccount: str, params={}):
-        raise NotSupported(self.id + ' transfer() is not supported yet')
-
-    def withdraw(self, code: str, amount: float, address: str, tag: Str = None, params={}):
-        raise NotSupported(self.id + ' withdraw() is not supported yet')
-
-    def create_deposit_address(self, code: str, params={}):
-        raise NotSupported(self.id + ' createDepositAddress() is not supported yet')
-
-    def set_leverage(self, leverage: int, symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' setLeverage() is not supported yet')
-
-    def fetch_leverage(self, symbol: str, params={}):
-        if self.has['fetchLeverages']:
-            leverages = self.fetch_leverages([symbol], params)
-            return self.safe_dict(leverages, symbol)
-        else:
-            raise NotSupported(self.id + ' fetchLeverage() is not supported yet')
-
-    def fetch_leverages(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchLeverages() is not supported yet')
-
-    def set_position_mode(self, hedged: bool, symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' setPositionMode() is not supported yet')
-
-    def add_margin(self, symbol: str, amount: float, params={}):
-        raise NotSupported(self.id + ' addMargin() is not supported yet')
-
-    def reduce_margin(self, symbol: str, amount: float, params={}):
-        raise NotSupported(self.id + ' reduceMargin() is not supported yet')
-
-    def set_margin(self, symbol: str, amount: float, params={}):
-        raise NotSupported(self.id + ' setMargin() is not supported yet')
-
-    def fetch_long_short_ratio(self, symbol: str, timeframe: Str = None, params={}):
-        raise NotSupported(self.id + ' fetchLongShortRatio() is not supported yet')
-
-    def fetch_long_short_ratio_history(self, symbol: Str = None, timeframe: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchLongShortRatioHistory() is not supported yet')
-
-    def fetch_margin_adjustment_history(self, symbol: Str = None, type: Str = None, since: Num = None, limit: Num = None, params={}):
-        """
-        fetches the history of margin added or reduced from contract isolated positions
-        :param str [symbol]: unified market symbol
-        :param str [type]: "add" or "reduce"
-        :param int [since]: timestamp in ms of the earliest change to fetch
-        :param int [limit]: the maximum amount of changes to fetch
-        :param dict params: extra parameters specific to the exchange api endpoint
-        :returns dict[]: a list of `margin structures <https://docs.ccxt.com/?id=margin-loan-structure>`
-        """
-        raise NotSupported(self.id + ' fetchMarginAdjustmentHistory() is not supported yet')
-
-    def set_margin_mode(self, marginMode: str, symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' setMarginMode() is not supported yet')
-
-    def fetch_deposit_addresses_by_network(self, code: str, params={}):
-        raise NotSupported(self.id + ' fetchDepositAddressesByNetwork() is not supported yet')
-
-    def fetch_open_interest_history(self, symbol: str, timeframe: str = '1h', since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchOpenInterestHistory() is not supported yet')
-
-    def fetch_open_interest(self, symbol: str, params={}):
-        raise NotSupported(self.id + ' fetchOpenInterest() is not supported yet')
-
-    def fetch_open_interests(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchOpenInterests() is not supported yet')
-
-    def sign_in(self, params={}):
-        raise NotSupported(self.id + ' signIn() is not supported yet')
-
-    def fetch_payment_methods(self, params={}):
-        raise NotSupported(self.id + ' fetchPaymentMethods() is not supported yet')
 
     def parse_to_int(self, number):
         # Solve Common intmisuse ex: int((since / str(1000)))
@@ -3369,46 +2734,6 @@ class Exchange(object):
                 'CRO': {'CRC20': 'CRONOS'},
                 'BRC20': {'BRC20': 'BTC'},
             },
-        }
-
-    def safe_ledger_entry(self, entry: object, currency: Currency = None):
-        currency = self.safe_currency(None, currency)
-        direction = self.safe_string(entry, 'direction')
-        before = self.safe_string(entry, 'before')
-        after = self.safe_string(entry, 'after')
-        amount = self.safe_string(entry, 'amount')
-        if amount is not None:
-            if before is None and after is not None:
-                before = Precise.string_sub(after, amount)
-            elif before is not None and after is None:
-                after = Precise.string_add(before, amount)
-        if before is not None and after is not None:
-            if direction is None:
-                if Precise.string_gt(before, after):
-                    direction = 'out'
-                if Precise.string_gt(after, before):
-                    direction = 'in'
-        fee = self.safe_value(entry, 'fee')
-        if fee is not None:
-            fee['cost'] = self.safe_number(fee, 'cost')
-        timestamp = self.safe_integer(entry, 'timestamp')
-        info = self.safe_dict(entry, 'info', {})
-        return {
-            'id': self.safe_string(entry, 'id'),
-            'timestamp': timestamp,
-            'datetime': self.iso8601(timestamp),
-            'direction': direction,
-            'account': self.safe_string(entry, 'account'),
-            'referenceId': self.safe_string(entry, 'referenceId'),
-            'referenceAccount': self.safe_string(entry, 'referenceAccount'),
-            'type': self.safe_string(entry, 'type'),
-            'currency': currency['code'],
-            'amount': self.parse_number(amount),
-            'before': self.parse_number(before),
-            'after': self.parse_number(after),
-            'status': self.safe_string(entry, 'status'),
-            'fee': fee,
-            'info': info,
         }
 
     def safe_currency_structure(self, currency: object):
@@ -4317,129 +3642,17 @@ class Exchange(object):
             'markPrice': self.safe_number(ticker, 'markPrice'),
         })
 
-    def fetch_borrow_rate(self, code: str, amount: float, params={}):
-        raise NotSupported(self.id + ' fetchBorrowRate is deprecated, please use fetchCrossBorrowRate or fetchIsolatedBorrowRate instead')
-
-    def repay_cross_margin(self, code: str, amount: float, params={}):
-        raise NotSupported(self.id + ' repayCrossMargin is not support yet')
-
     def repay_isolated_margin(self, symbol: str, code: str, amount: float, params={}):
         raise NotSupported(self.id + ' repayIsolatedMargin is not support yet')
 
-    def borrow_cross_margin(self, code: str, amount: float, params={}):
-        raise NotSupported(self.id + ' borrowCrossMargin is not support yet')
-
     def borrow_isolated_margin(self, symbol: str, code: str, amount: float, params={}):
         raise NotSupported(self.id + ' borrowIsolatedMargin is not support yet')
-
-    def borrow_margin(self, code: str, amount: float, symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' borrowMargin is deprecated, please use borrowCrossMargin or borrowIsolatedMargin instead')
-
-    def repay_margin(self, code: str, amount: float, symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' repayMargin is deprecated, please use repayCrossMargin or repayIsolatedMargin instead')
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = '1m', since: Int = None, limit: Int = None, params={}):
         message = ''
         if self.has['fetchTrades']:
             message = '. If you want to build OHLCV candles from trade executions data, visit https://github.com/ccxt/ccxt/tree/master/examples/ and see "build-ohlcv-bars" file'
         raise NotSupported(self.id + ' fetchOHLCV() is not supported yet' + message)
-
-    def fetch_ohlcv_ws(self, symbol: str, timeframe: str = '1m', since: Int = None, limit: Int = None, params={}):
-        message = ''
-        if self.has['fetchTradesWs']:
-            message = '. If you want to build OHLCV candles from trade executions data, visit https://github.com/ccxt/ccxt/tree/master/examples/ and see "build-ohlcv-bars" file'
-        raise NotSupported(self.id + ' fetchOHLCVWs() is not supported yet. Try using fetchOHLCV instead.' + message)
-
-    def watch_ohlcv(self, symbol: str, timeframe: str = '1m', since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchOHLCV() is not supported yet')
-
-    def convert_trading_view_to_ohlcv(self, ohlcvs: List[List[float]], timestamp='t', open='o', high='h', low='l', close='c', volume='v', ms=False):
-        result = []
-        timestamps = self.safe_list(ohlcvs, timestamp, [])
-        opens = self.safe_list(ohlcvs, open, [])
-        highs = self.safe_list(ohlcvs, high, [])
-        lows = self.safe_list(ohlcvs, low, [])
-        closes = self.safe_list(ohlcvs, close, [])
-        volumes = self.safe_list(ohlcvs, volume, [])
-        for i in range(0, len(timestamps)):
-            result.append([
-                self.safe_integer(timestamps, i) if ms else self.safe_timestamp(timestamps, i),
-                self.safe_value(opens, i),
-                self.safe_value(highs, i),
-                self.safe_value(lows, i),
-                self.safe_value(closes, i),
-                self.safe_value(volumes, i),
-            ])
-        return result
-
-    def convert_ohlcv_to_trading_view(self, ohlcvs: List[List[float]], timestamp='t', open='o', high='h', low='l', close='c', volume='v', ms=False):
-        result = {}
-        result[timestamp] = []
-        result[open] = []
-        result[high] = []
-        result[low] = []
-        result[close] = []
-        result[volume] = []
-        for i in range(0, len(ohlcvs)):
-            ts = ohlcvs[i][0] if ms else self.parse_to_int(ohlcvs[i][0] / 1000)
-            resultTimestamp = result[timestamp]
-            resultTimestamp.append(ts)
-            resultOpen = result[open]
-            resultOpen.append(ohlcvs[i][1])
-            resultHigh = result[high]
-            resultHigh.append(ohlcvs[i][2])
-            resultLow = result[low]
-            resultLow.append(ohlcvs[i][3])
-            resultClose = result[close]
-            resultClose.append(ohlcvs[i][4])
-            resultVolume = result[volume]
-            resultVolume.append(ohlcvs[i][5])
-        return result
-
-    def fetch_web_endpoint(self, method, endpointMethod, returnAsJson, startRegex=None, endRegex=None):
-        errorMessage = ''
-        options = self.safe_value(self.options, method, {})
-        muteOnFailure = self.safe_bool(options, 'webApiMuteFailure', True)
-        try:
-            # if it was not explicitly disabled, then don't fetch
-            if self.safe_bool(options, 'webApiEnable', True) is not True:
-                return None
-            maxRetries = self.safe_value(options, 'webApiRetries', 10)
-            response = None
-            retry = 0
-            shouldBreak = False
-            while(retry < maxRetries):
-                try:
-                    response = getattr(self, endpointMethod)({})
-                    shouldBreak = True
-                    break
-                except Exception as e:
-                    retry = retry + 1
-                    if retry == maxRetries:
-                        raise e
-                if shouldBreak:
-                    break  # self is needed because of GO
-            content = response
-            if startRegex is not None:
-                splitted_by_start = content.split(startRegex)
-                content = splitted_by_start[1]  # we need second part after start
-            if endRegex is not None:
-                splitted_by_end = content.split(endRegex)
-                content = splitted_by_end[0]  # we need first part after start
-            if returnAsJson and (isinstance(content, str)):
-                jsoned = self.parse_json(content.strip())  # content should be trimmed before json parsing
-                if jsoned:
-                    return jsoned  # if parsing was not successfull, exception should be thrown
-                else:
-                    raise BadResponse('could not parse the response into json')
-            else:
-                return content
-        except Exception as e:
-            errorMessage = self.id + ' ' + method + '() failed to fetch correct data from website. Probably webpage markup has been changed, breaking the page custom parser.'
-        if muteOnFailure:
-            return None
-        else:
-            raise BadResponse(errorMessage)
 
     def market_ids(self, symbols: Strings = None):
         if symbols is None:
@@ -4682,35 +3895,6 @@ class Exchange(object):
             results.append(self.parse_ohlcv(ohlcvs[i], market))
         sorted = self.sort_by(results, 0)
         return self.filter_by_since_limit(sorted, since, limit, 0, tail)
-
-    def parse_leverage_tiers(self, response: Any, symbols: List[str] = None, marketIdKey=None):
-        # marketIdKey should only be None when response is a dictionary.
-        symbols = self.market_symbols(symbols)
-        tiers = {}
-        symbolsLength = 0
-        if symbols is not None:
-            symbolsLength = len(symbols)
-        noSymbols = (symbols is None) or (symbolsLength == 0)
-        if isinstance(response, list):
-            for i in range(0, len(response)):
-                item = response[i]
-                id = self.safe_string(item, marketIdKey)
-                market = self.safe_market(id, None, None, 'swap')
-                symbol = market['symbol']
-                contract = self.safe_bool(market, 'contract', False)
-                if contract and (noSymbols or self.in_array(symbol, symbols)):
-                    tiers[symbol] = self.parse_market_leverage_tiers(item, market)
-        else:
-            keys = list(response.keys())
-            for i in range(0, len(keys)):
-                marketId = keys[i]
-                item = response[marketId]
-                market = self.safe_market(marketId, None, None, 'swap')
-                symbol = market['symbol']
-                contract = self.safe_bool(market, 'contract', False)
-                if contract and (noSymbols or self.in_array(symbol, symbols)):
-                    tiers[symbol] = self.parse_market_leverage_tiers(item, market)
-        return tiers
 
     def load_trading_limits(self, symbols: Strings = None, reload=False, params={}):
         if self.has['fetchTradingLimits']:
@@ -5033,94 +4217,15 @@ class Exchange(object):
         self.accountsById = self.index_by(self.accounts, 'id')
         return self.accounts
 
-    def build_ohlcvc(self, trades: List[Trade], timeframe: str = '1m', since: float = 0, limit: float = 2147483647):
-        # given a sorted arrays of trades(recent last) and a timeframe builds an array of OHLCV candles
-        # note, default limit value(2147483647) is max int32 value
-        ms = self.parse_timeframe(timeframe) * 1000
-        ohlcvs = []
-        i_timestamp = 0
-        # open = 1
-        i_high = 2
-        i_low = 3
-        i_close = 4
-        i_volume = 5
-        i_count = 6
-        tradesLength = len(trades)
-        oldest = min(tradesLength, limit)
-        options = self.safe_dict(self.options, 'buildOHLCVC', {})
-        skipZeroPrices = self.safe_bool(options, 'skipZeroPrices', True)
-        for i in range(0, oldest):
-            trade = trades[i]
-            ts = trade['timestamp']
-            price = trade['price']
-            if ts < since:
-                continue
-            openingTime = int(math.floor(ts / ms)) * ms  # shift to the edge of m/h/d(but not M)
-            if openingTime < since:  # we don't need bars, that have opening time earlier than requested
-                continue
-            ohlcv_length = len(ohlcvs)
-            candle = ohlcv_length - 1
-            if skipZeroPrices and not (price > 0) and not (price < 0):
-                continue
-            isFirstCandle = candle == -1
-            if isFirstCandle or openingTime >= self.sum(ohlcvs[candle][i_timestamp], ms):
-                # moved to a new timeframe -> create a new candle from opening trade
-                ohlcvs.append([
-                    openingTime,  # timestamp
-                    price,  # O
-                    price,  # H
-                    price,  # L
-                    price,  # C
-                    trade['amount'],  # V
-                    1,  # count
-                ])
-            else:
-                # still processing the same timeframe -> update opening trade
-                ohlcvs[candle][i_high] = max(ohlcvs[candle][i_high], price)
-                ohlcvs[candle][i_low] = min(ohlcvs[candle][i_low], price)
-                ohlcvs[candle][i_close] = price
-                ohlcvs[candle][i_volume] = self.sum(ohlcvs[candle][i_volume], trade['amount'])
-                ohlcvs[candle][i_count] = self.sum(ohlcvs[candle][i_count], 1)
-        return ohlcvs
-
     def parse_trading_view_ohlcv(self, ohlcvs, market=None, timeframe='1m', since: Int = None, limit: Int = None):
         result = self.convert_trading_view_to_ohlcv(ohlcvs)
         return self.parse_ohlcvs(result, market, timeframe, since, limit)
 
-    def edit_limit_buy_order(self, id: str, symbol: str, amount: float, price: Num = None, params={}):
-        return self.edit_limit_order(id, symbol, 'buy', amount, price, params)
-
-    def edit_limit_sell_order(self, id: str, symbol: str, amount: float, price: Num = None, params={}):
-        return self.edit_limit_order(id, symbol, 'sell', amount, price, params)
-
-    def edit_limit_order(self, id: str, symbol: str, side: OrderSide, amount: float, price: Num = None, params={}):
-        return self.edit_order(id, symbol, 'limit', side, amount, price, params)
-
-    def edit_order(self, id: str, symbol: str, type: OrderType, side: OrderSide, amount: Num = None, price: Num = None, params={}):
-        self.cancel_order(id, symbol)
-        return self.create_order(symbol, type, side, amount, price, params)
-
     def edit_order_with_client_order_id(self, clientOrderId: str, symbol: str, type: OrderType, side: OrderSide, amount: Num = None, price: Num = None, params={}):
         return self.edit_order('', symbol, type, side, amount, price, self.extend({'clientOrderId': clientOrderId}, params))
 
-    def edit_order_ws(self, id: str, symbol: str, type: OrderType, side: OrderSide, amount: Num = None, price: Num = None, params={}):
-        self.cancel_order_ws(id, symbol)
-        return self.create_order_ws(symbol, type, side, amount, price, params)
-
     def fetch_position(self, symbol: str, params={}):
         raise NotSupported(self.id + ' fetchPosition() is not supported yet')
-
-    def fetch_position_ws(self, symbol: str, params={}):
-        raise NotSupported(self.id + ' fetchPositionWs() is not supported yet')
-
-    def watch_position(self, symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' watchPosition() is not supported yet')
-
-    def watch_positions(self, symbols: Strings = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchPositions() is not supported yet')
-
-    def watch_position_for_symbols(self, symbols: Strings = None, since: Int = None, limit: Int = None, params={}):
-        return self.watch_positions(symbols, since, limit, params)
 
     def fetch_positions_for_symbol(self, symbol: str, params={}):
         """
@@ -5131,35 +4236,8 @@ class Exchange(object):
         """
         raise NotSupported(self.id + ' fetchPositionsForSymbol() is not supported yet')
 
-    def fetch_positions_for_symbol_ws(self, symbol: str, params={}):
-        """
-        fetches all open positions for specific symbol, unlike fetchPositions(which is designed to work with multiple symbols) so self method might be preffered for one-market position, because of less rate-limit consumption and speed
-        :param str symbol: unified market symbol
-        :param dict params: extra parameters specific to the endpoint
-        :returns dict[]: a list of `position structure <https://docs.ccxt.com/?id=position-structure>` with maximum 3 items - possible one position for "one-way" mode, and possible two positions(long & short) for "two-way"(a.k.a. hedge) mode
-        """
-        raise NotSupported(self.id + ' fetchPositionsForSymbol() is not supported yet')
-
     def fetch_positions(self, symbols: Strings = None, params={}):
         raise NotSupported(self.id + ' fetchPositions() is not supported yet')
-
-    def fetch_positions_ws(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchPositions() is not supported yet')
-
-    def fetch_positions_risk(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchPositionsRisk() is not supported yet')
-
-    def fetch_bids_asks(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchBidsAsks() is not supported yet')
-
-    def fetch_borrow_interest(self, code: Str = None, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchBorrowInterest() is not supported yet')
-
-    def fetch_ledger(self, code: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchLedger() is not supported yet')
-
-    def fetch_ledger_entry(self, id: str, code: Str = None, params={}):
-        raise NotSupported(self.id + ' fetchLedgerEntry() is not supported yet')
 
     def parse_bid_ask(self, bidask, priceKey: IndexType = 0, amountKey: IndexType = 1, countOrIdKey: IndexType = 2):
         price = self.safe_float(bidask, priceKey)
@@ -5249,73 +4327,14 @@ class Exchange(object):
     def fetch_balance(self, params={}):
         raise NotSupported(self.id + ' fetchBalance() is not supported yet')
 
-    def fetch_balance_ws(self, params={}):
-        raise NotSupported(self.id + ' fetchBalanceWs() is not supported yet')
-
     def parse_balance(self, response):
         raise NotSupported(self.id + ' parseBalance() is not supported yet')
-
-    def watch_balance(self, params={}):
-        raise NotSupported(self.id + ' watchBalance() is not supported yet')
-
-    def fetch_partial_balance(self, part, params={}):
-        balance = self.fetch_balance(params)
-        return balance[part]
-
-    def fetch_free_balance(self, params={}):
-        return self.fetch_partial_balance('free', params)
-
-    def fetch_used_balance(self, params={}):
-        return self.fetch_partial_balance('used', params)
-
-    def fetch_total_balance(self, params={}):
-        return self.fetch_partial_balance('total', params)
-
-    def fetch_status(self, params={}):
-        raise NotSupported(self.id + ' fetchStatus() is not supported yet')
-
-    def fetch_transaction_fee(self, code: str, params={}):
-        if not self.has['fetchTransactionFees']:
-            raise NotSupported(self.id + ' fetchTransactionFee() is not supported yet')
-        return self.fetch_transaction_fees([code], params)
-
-    def fetch_transaction_fees(self, codes: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchTransactionFees() is not supported yet')
-
-    def fetch_deposit_withdraw_fees(self, codes: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchDepositWithdrawFees() is not supported yet')
-
-    def fetch_deposit_withdraw_fee(self, code: str, params={}):
-        if not self.has['fetchDepositWithdrawFees']:
-            raise NotSupported(self.id + ' fetchDepositWithdrawFee() is not supported yet')
-        fees = self.fetch_deposit_withdraw_fees([code], params)
-        return self.safe_value(fees, code)
 
     def get_supported_mapping(self, key, mapping={}):
         if key in mapping:
             return mapping[key]
         else:
             raise NotSupported(self.id + ' ' + key + ' does not have a value in mapping')
-
-    def fetch_cross_borrow_rate(self, code: str, params={}):
-        self.load_markets()
-        if not self.has['fetchBorrowRates']:
-            raise NotSupported(self.id + ' fetchCrossBorrowRate() is not supported yet')
-        borrowRates = self.fetch_cross_borrow_rates(params)
-        rate = self.safe_value(borrowRates, code)
-        if rate is None:
-            raise ExchangeError(self.id + ' fetchCrossBorrowRate() could not find the borrow rate for currency code ' + code)
-        return rate
-
-    def fetch_isolated_borrow_rate(self, symbol: str, params={}):
-        self.load_markets()
-        if not self.has['fetchBorrowRates']:
-            raise NotSupported(self.id + ' fetchIsolatedBorrowRate() is not supported yet')
-        borrowRates = self.fetch_isolated_borrow_rates(params)
-        rate = self.safe_dict(borrowRates, symbol)
-        if rate is None:
-            raise ExchangeError(self.id + ' fetchIsolatedBorrowRate() could not find the borrow rate for market symbol ' + symbol)
-        return rate
 
     def handle_option_and_params(self, params: object, methodName: str, optionName: str, defaultValue=None):
         # This method can be used to obtain method specific properties, i.e: self.handle_option_and_params(params, 'fetchPosition', 'marginMode', 'isolated')
@@ -5474,43 +4493,8 @@ class Exchange(object):
         else:
             raise NotSupported(self.id + ' fetchMarkPrices() is not supported yet')
 
-    def fetch_ticker_ws(self, symbol: str, params={}):
-        if self.has['fetchTickersWs']:
-            self.load_markets()
-            market = self.market(symbol)
-            symbol = market['symbol']
-            tickers = self.fetch_tickers_ws([symbol], params)
-            ticker = self.safe_dict(tickers, symbol)
-            if ticker is None:
-                raise NullResponse(self.id + ' fetchTickerWs() could not find a ticker for ' + symbol)
-            else:
-                return ticker
-        else:
-            raise NotSupported(self.id + ' fetchTickerWs() is not supported yet')
-
-    def watch_ticker(self, symbol: str, params={}):
-        raise NotSupported(self.id + ' watchTicker() is not supported yet')
-
     def fetch_tickers(self, symbols: Strings = None, params={}):
         raise NotSupported(self.id + ' fetchTickers() is not supported yet')
-
-    def fetch_mark_prices(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchMarkPrices() is not supported yet')
-
-    def fetch_tickers_ws(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchTickers() is not supported yet')
-
-    def fetch_order_books(self, symbols: Strings = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchOrderBooks() is not supported yet')
-
-    def watch_bids_asks(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' watchBidsAsks() is not supported yet')
-
-    def watch_tickers(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' watchTickers() is not supported yet')
-
-    def un_watch_tickers(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' unWatchTickers() is not supported yet')
 
     def fetch_order(self, id: str, symbol: Str = None, params={}):
         raise NotSupported(self.id + ' fetchOrder() is not supported yet')
@@ -5526,383 +4510,11 @@ class Exchange(object):
         extendedParams = self.extend(params, {'clientOrderId': clientOrderId})
         return self.fetch_order('', symbol, extendedParams)
 
-    def fetch_order_ws(self, id: str, symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' fetchOrderWs() is not supported yet')
-
-    def fetch_order_status(self, id: str, symbol: Str = None, params={}):
-        # TODO: TypeScript: change method signature by replacing
-        # Promise<string> with Promise<Order['status']>.
-        order = self.fetch_order(id, symbol, params)
-        return order['status']
-
-    def fetch_unified_order(self, order, params={}):
-        return self.fetch_order(self.safe_string(order, 'id'), self.safe_string(order, 'symbol'), params)
-
     def create_order(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, params={}):
         raise NotSupported(self.id + ' createOrder() is not supported yet')
 
-    def create_convert_trade(self, id: str, fromCode: str, toCode: str, amount: Num = None, params={}):
-        raise NotSupported(self.id + ' createConvertTrade() is not supported yet')
-
-    def fetch_convert_trade(self, id: str, code: Str = None, params={}):
-        raise NotSupported(self.id + ' fetchConvertTrade() is not supported yet')
-
-    def fetch_convert_trade_history(self, code: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchConvertTradeHistory() is not supported yet')
-
-    def fetch_position_mode(self, symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' fetchPositionMode() is not supported yet')
-
-    def create_trailing_amount_order(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, trailingAmount: Num = None, trailingTriggerPrice: Num = None, params={}):
-        """
-        create a trailing order by providing the symbol, type, side, amount, price and trailingAmount
-        :param str symbol: unified symbol of the market to create an order in
-        :param str type: 'market' or 'limit'
-        :param str side: 'buy' or 'sell'
-        :param float amount: how much you want to trade in units of the base currency, or number of contracts
-        :param float [price]: the price for the order to be filled at, in units of the quote currency, ignored in market orders
-        :param float trailingAmount: the quote amount to trail away from the current market price
-        :param float [trailingTriggerPrice]: the price to activate a trailing order, default uses the price argument
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if trailingAmount is None:
-            raise ArgumentsRequired(self.id + ' createTrailingAmountOrder() requires a trailingAmount argument')
-        params['trailingAmount'] = trailingAmount
-        if trailingTriggerPrice is not None:
-            params['trailingTriggerPrice'] = trailingTriggerPrice
-        if self.has['createTrailingAmountOrder']:
-            return self.create_order(symbol, type, side, amount, price, params)
-        raise NotSupported(self.id + ' createTrailingAmountOrder() is not supported yet')
-
-    def create_trailing_amount_order_ws(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, trailingAmount: Num = None, trailingTriggerPrice: Num = None, params={}):
-        """
-        create a trailing order by providing the symbol, type, side, amount, price and trailingAmount
-        :param str symbol: unified symbol of the market to create an order in
-        :param str type: 'market' or 'limit'
-        :param str side: 'buy' or 'sell'
-        :param float amount: how much you want to trade in units of the base currency, or number of contracts
-        :param float [price]: the price for the order to be filled at, in units of the quote currency, ignored in market orders
-        :param float trailingAmount: the quote amount to trail away from the current market price
-        :param float [trailingTriggerPrice]: the price to activate a trailing order, default uses the price argument
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if trailingAmount is None:
-            raise ArgumentsRequired(self.id + ' createTrailingAmountOrderWs() requires a trailingAmount argument')
-        params['trailingAmount'] = trailingAmount
-        if trailingTriggerPrice is not None:
-            params['trailingTriggerPrice'] = trailingTriggerPrice
-        if self.has['createTrailingAmountOrderWs']:
-            return self.create_order_ws(symbol, type, side, amount, price, params)
-        raise NotSupported(self.id + ' createTrailingAmountOrderWs() is not supported yet')
-
-    def create_trailing_percent_order(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, trailingPercent: Num = None, trailingTriggerPrice: Num = None, params={}):
-        """
-        create a trailing order by providing the symbol, type, side, amount, price and trailingPercent
-        :param str symbol: unified symbol of the market to create an order in
-        :param str type: 'market' or 'limit'
-        :param str side: 'buy' or 'sell'
-        :param float amount: how much you want to trade in units of the base currency, or number of contracts
-        :param float [price]: the price for the order to be filled at, in units of the quote currency, ignored in market orders
-        :param float trailingPercent: the percent to trail away from the current market price
-        :param float [trailingTriggerPrice]: the price to activate a trailing order, default uses the price argument
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if trailingPercent is None:
-            raise ArgumentsRequired(self.id + ' createTrailingPercentOrder() requires a trailingPercent argument')
-        params['trailingPercent'] = trailingPercent
-        if trailingTriggerPrice is not None:
-            params['trailingTriggerPrice'] = trailingTriggerPrice
-        if self.has['createTrailingPercentOrder']:
-            return self.create_order(symbol, type, side, amount, price, params)
-        raise NotSupported(self.id + ' createTrailingPercentOrder() is not supported yet')
-
-    def create_trailing_percent_order_ws(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, trailingPercent: Num = None, trailingTriggerPrice: Num = None, params={}):
-        """
-        create a trailing order by providing the symbol, type, side, amount, price and trailingPercent
-        :param str symbol: unified symbol of the market to create an order in
-        :param str type: 'market' or 'limit'
-        :param str side: 'buy' or 'sell'
-        :param float amount: how much you want to trade in units of the base currency, or number of contracts
-        :param float [price]: the price for the order to be filled at, in units of the quote currency, ignored in market orders
-        :param float trailingPercent: the percent to trail away from the current market price
-        :param float [trailingTriggerPrice]: the price to activate a trailing order, default uses the price argument
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if trailingPercent is None:
-            raise ArgumentsRequired(self.id + ' createTrailingPercentOrderWs() requires a trailingPercent argument')
-        params['trailingPercent'] = trailingPercent
-        if trailingTriggerPrice is not None:
-            params['trailingTriggerPrice'] = trailingTriggerPrice
-        if self.has['createTrailingPercentOrderWs']:
-            return self.create_order_ws(symbol, type, side, amount, price, params)
-        raise NotSupported(self.id + ' createTrailingPercentOrderWs() is not supported yet')
-
-    def create_market_order_with_cost(self, symbol: str, side: OrderSide, cost: float, params={}):
-        """
-        create a market order by providing the symbol, side and cost
-        :param str symbol: unified symbol of the market to create an order in
-        :param str side: 'buy' or 'sell'
-        :param float cost: how much you want to trade in units of the quote currency
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if self.has['createMarketOrderWithCost'] or (self.has['createMarketBuyOrderWithCost'] and self.has['createMarketSellOrderWithCost']):
-            return self.create_order(symbol, 'market', side, cost, 1, params)
-        raise NotSupported(self.id + ' createMarketOrderWithCost() is not supported yet')
-
-    def create_market_buy_order_with_cost(self, symbol: str, cost: float, params={}):
-        """
-        create a market buy order by providing the symbol and cost
-        :param str symbol: unified symbol of the market to create an order in
-        :param float cost: how much you want to trade in units of the quote currency
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if self.options['createMarketBuyOrderRequiresPrice'] or self.has['createMarketBuyOrderWithCost']:
-            return self.create_order(symbol, 'market', 'buy', cost, 1, params)
-        raise NotSupported(self.id + ' createMarketBuyOrderWithCost() is not supported yet')
-
-    def create_market_sell_order_with_cost(self, symbol: str, cost: float, params={}):
-        """
-        create a market sell order by providing the symbol and cost
-        :param str symbol: unified symbol of the market to create an order in
-        :param float cost: how much you want to trade in units of the quote currency
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if self.options['createMarketSellOrderRequiresPrice'] or self.has['createMarketSellOrderWithCost']:
-            return self.create_order(symbol, 'market', 'sell', cost, 1, params)
-        raise NotSupported(self.id + ' createMarketSellOrderWithCost() is not supported yet')
-
-    def create_market_order_with_cost_ws(self, symbol: str, side: OrderSide, cost: float, params={}):
-        """
-        create a market order by providing the symbol, side and cost
-        :param str symbol: unified symbol of the market to create an order in
-        :param str side: 'buy' or 'sell'
-        :param float cost: how much you want to trade in units of the quote currency
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if self.has['createMarketOrderWithCostWs'] or (self.has['createMarketBuyOrderWithCostWs'] and self.has['createMarketSellOrderWithCostWs']):
-            return self.create_order_ws(symbol, 'market', side, cost, 1, params)
-        raise NotSupported(self.id + ' createMarketOrderWithCostWs() is not supported yet')
-
-    def create_trigger_order(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, triggerPrice: Num = None, params={}):
-        """
-        create a trigger stop order(type 1)
-        :param str symbol: unified symbol of the market to create an order in
-        :param str type: 'market' or 'limit'
-        :param str side: 'buy' or 'sell'
-        :param float amount: how much you want to trade in units of the base currency or the number of contracts
-        :param float [price]: the price to fulfill the order, in units of the quote currency, ignored in market orders
-        :param float triggerPrice: the price to trigger the stop order, in units of the quote currency
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if triggerPrice is None:
-            raise ArgumentsRequired(self.id + ' createTriggerOrder() requires a triggerPrice argument')
-        params['triggerPrice'] = triggerPrice
-        if self.has['createTriggerOrder']:
-            return self.create_order(symbol, type, side, amount, price, params)
-        raise NotSupported(self.id + ' createTriggerOrder() is not supported yet')
-
-    def create_trigger_order_ws(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, triggerPrice: Num = None, params={}):
-        """
-        create a trigger stop order(type 1)
-        :param str symbol: unified symbol of the market to create an order in
-        :param str type: 'market' or 'limit'
-        :param str side: 'buy' or 'sell'
-        :param float amount: how much you want to trade in units of the base currency or the number of contracts
-        :param float [price]: the price to fulfill the order, in units of the quote currency, ignored in market orders
-        :param float triggerPrice: the price to trigger the stop order, in units of the quote currency
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if triggerPrice is None:
-            raise ArgumentsRequired(self.id + ' createTriggerOrderWs() requires a triggerPrice argument')
-        params['triggerPrice'] = triggerPrice
-        if self.has['createTriggerOrderWs']:
-            return self.create_order_ws(symbol, type, side, amount, price, params)
-        raise NotSupported(self.id + ' createTriggerOrderWs() is not supported yet')
-
-    def create_stop_loss_order(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, stopLossPrice: Num = None, params={}):
-        """
-        create a trigger stop loss order(type 2)
-        :param str symbol: unified symbol of the market to create an order in
-        :param str type: 'market' or 'limit'
-        :param str side: 'buy' or 'sell'
-        :param float amount: how much you want to trade in units of the base currency or the number of contracts
-        :param float [price]: the price to fulfill the order, in units of the quote currency, ignored in market orders
-        :param float stopLossPrice: the price to trigger the stop loss order, in units of the quote currency
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if stopLossPrice is None:
-            raise ArgumentsRequired(self.id + ' createStopLossOrder() requires a stopLossPrice argument')
-        params['stopLossPrice'] = stopLossPrice
-        if self.has['createStopLossOrder']:
-            return self.create_order(symbol, type, side, amount, price, params)
-        raise NotSupported(self.id + ' createStopLossOrder() is not supported yet')
-
-    def create_stop_loss_order_ws(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, stopLossPrice: Num = None, params={}):
-        """
-        create a trigger stop loss order(type 2)
-        :param str symbol: unified symbol of the market to create an order in
-        :param str type: 'market' or 'limit'
-        :param str side: 'buy' or 'sell'
-        :param float amount: how much you want to trade in units of the base currency or the number of contracts
-        :param float [price]: the price to fulfill the order, in units of the quote currency, ignored in market orders
-        :param float stopLossPrice: the price to trigger the stop loss order, in units of the quote currency
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if stopLossPrice is None:
-            raise ArgumentsRequired(self.id + ' createStopLossOrderWs() requires a stopLossPrice argument')
-        params['stopLossPrice'] = stopLossPrice
-        if self.has['createStopLossOrderWs']:
-            return self.create_order_ws(symbol, type, side, amount, price, params)
-        raise NotSupported(self.id + ' createStopLossOrderWs() is not supported yet')
-
-    def create_take_profit_order(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, takeProfitPrice: Num = None, params={}):
-        """
-        create a trigger take profit order(type 2)
-        :param str symbol: unified symbol of the market to create an order in
-        :param str type: 'market' or 'limit'
-        :param str side: 'buy' or 'sell'
-        :param float amount: how much you want to trade in units of the base currency or the number of contracts
-        :param float [price]: the price to fulfill the order, in units of the quote currency, ignored in market orders
-        :param float takeProfitPrice: the price to trigger the take profit order, in units of the quote currency
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if takeProfitPrice is None:
-            raise ArgumentsRequired(self.id + ' createTakeProfitOrder() requires a takeProfitPrice argument')
-        params['takeProfitPrice'] = takeProfitPrice
-        if self.has['createTakeProfitOrder']:
-            return self.create_order(symbol, type, side, amount, price, params)
-        raise NotSupported(self.id + ' createTakeProfitOrder() is not supported yet')
-
-    def create_take_profit_order_ws(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, takeProfitPrice: Num = None, params={}):
-        """
-        create a trigger take profit order(type 2)
-        :param str symbol: unified symbol of the market to create an order in
-        :param str type: 'market' or 'limit'
-        :param str side: 'buy' or 'sell'
-        :param float amount: how much you want to trade in units of the base currency or the number of contracts
-        :param float [price]: the price to fulfill the order, in units of the quote currency, ignored in market orders
-        :param float takeProfitPrice: the price to trigger the take profit order, in units of the quote currency
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        if takeProfitPrice is None:
-            raise ArgumentsRequired(self.id + ' createTakeProfitOrderWs() requires a takeProfitPrice argument')
-        params['takeProfitPrice'] = takeProfitPrice
-        if self.has['createTakeProfitOrderWs']:
-            return self.create_order_ws(symbol, type, side, amount, price, params)
-        raise NotSupported(self.id + ' createTakeProfitOrderWs() is not supported yet')
-
-    def create_order_with_take_profit_and_stop_loss(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, takeProfit: Num = None, stopLoss: Num = None, params={}):
-        """
-        create an order with a stop loss or take profit attached(type 3)
-        :param str symbol: unified symbol of the market to create an order in
-        :param str type: 'market' or 'limit'
-        :param str side: 'buy' or 'sell'
-        :param float amount: how much you want to trade in units of the base currency or the number of contracts
-        :param float [price]: the price to fulfill the order, in units of the quote currency, ignored in market orders
-        :param float [takeProfit]: the take profit price, in units of the quote currency
-        :param float [stopLoss]: the stop loss price, in units of the quote currency
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :param str [params.takeProfitType]: *not available on all exchanges* 'limit' or 'market'
-        :param str [params.stopLossType]: *not available on all exchanges* 'limit' or 'market'
-        :param str [params.takeProfitPriceType]: *not available on all exchanges* 'last', 'mark' or 'index'
-        :param str [params.stopLossPriceType]: *not available on all exchanges* 'last', 'mark' or 'index'
-        :param float [params.takeProfitLimitPrice]: *not available on all exchanges* limit price for a limit take profit order
-        :param float [params.stopLossLimitPrice]: *not available on all exchanges* stop loss for a limit stop loss order
-        :param float [params.takeProfitAmount]: *not available on all exchanges* the amount for a take profit
-        :param float [params.stopLossAmount]: *not available on all exchanges* the amount for a stop loss
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        params = self.set_take_profit_and_stop_loss_params(symbol, type, side, amount, price, takeProfit, stopLoss, params)
-        if self.has['createOrderWithTakeProfitAndStopLoss']:
-            return self.create_order(symbol, type, side, amount, price, params)
-        raise NotSupported(self.id + ' createOrderWithTakeProfitAndStopLoss() is not supported yet')
-
-    def set_take_profit_and_stop_loss_params(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, takeProfit: Num = None, stopLoss: Num = None, params={}):
-        if (takeProfit is None) and (stopLoss is None):
-            raise ArgumentsRequired(self.id + ' createOrderWithTakeProfitAndStopLoss() requires either a takeProfit or stopLoss argument')
-        if takeProfit is not None:
-            params['takeProfit'] = {
-                'triggerPrice': takeProfit,
-            }
-        if stopLoss is not None:
-            params['stopLoss'] = {
-                'triggerPrice': stopLoss,
-            }
-        takeProfitType = self.safe_string(params, 'takeProfitType')
-        takeProfitPriceType = self.safe_string(params, 'takeProfitPriceType')
-        takeProfitLimitPrice = self.safe_string(params, 'takeProfitLimitPrice')
-        takeProfitAmount = self.safe_string(params, 'takeProfitAmount')
-        stopLossType = self.safe_string(params, 'stopLossType')
-        stopLossPriceType = self.safe_string(params, 'stopLossPriceType')
-        stopLossLimitPrice = self.safe_string(params, 'stopLossLimitPrice')
-        stopLossAmount = self.safe_string(params, 'stopLossAmount')
-        if takeProfitType is not None:
-            params['takeProfit']['type'] = takeProfitType
-        if takeProfitPriceType is not None:
-            params['takeProfit']['priceType'] = takeProfitPriceType
-        if takeProfitLimitPrice is not None:
-            params['takeProfit']['price'] = self.parse_to_numeric(takeProfitLimitPrice)
-        if takeProfitAmount is not None:
-            params['takeProfit']['amount'] = self.parse_to_numeric(takeProfitAmount)
-        if stopLossType is not None:
-            params['stopLoss']['type'] = stopLossType
-        if stopLossPriceType is not None:
-            params['stopLoss']['priceType'] = stopLossPriceType
-        if stopLossLimitPrice is not None:
-            params['stopLoss']['price'] = self.parse_to_numeric(stopLossLimitPrice)
-        if stopLossAmount is not None:
-            params['stopLoss']['amount'] = self.parse_to_numeric(stopLossAmount)
-        params = self.omit(params, ['takeProfitType', 'takeProfitPriceType', 'takeProfitLimitPrice', 'takeProfitAmount', 'stopLossType', 'stopLossPriceType', 'stopLossLimitPrice', 'stopLossAmount'])
-        return params
-
-    def create_order_with_take_profit_and_stop_loss_ws(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, takeProfit: Num = None, stopLoss: Num = None, params={}):
-        """
-        create an order with a stop loss or take profit attached(type 3)
-        :param str symbol: unified symbol of the market to create an order in
-        :param str type: 'market' or 'limit'
-        :param str side: 'buy' or 'sell'
-        :param float amount: how much you want to trade in units of the base currency or the number of contracts
-        :param float [price]: the price to fulfill the order, in units of the quote currency, ignored in market orders
-        :param float [takeProfit]: the take profit price, in units of the quote currency
-        :param float [stopLoss]: the stop loss price, in units of the quote currency
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :param str [params.takeProfitType]: *not available on all exchanges* 'limit' or 'market'
-        :param str [params.stopLossType]: *not available on all exchanges* 'limit' or 'market'
-        :param str [params.takeProfitPriceType]: *not available on all exchanges* 'last', 'mark' or 'index'
-        :param str [params.stopLossPriceType]: *not available on all exchanges* 'last', 'mark' or 'index'
-        :param float [params.takeProfitLimitPrice]: *not available on all exchanges* limit price for a limit take profit order
-        :param float [params.stopLossLimitPrice]: *not available on all exchanges* stop loss for a limit stop loss order
-        :param float [params.takeProfitAmount]: *not available on all exchanges* the amount for a take profit
-        :param float [params.stopLossAmount]: *not available on all exchanges* the amount for a stop loss
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        params = self.set_take_profit_and_stop_loss_params(symbol, type, side, amount, price, takeProfit, stopLoss, params)
-        if self.has['createOrderWithTakeProfitAndStopLossWs']:
-            return self.create_order_ws(symbol, type, side, amount, price, params)
-        raise NotSupported(self.id + ' createOrderWithTakeProfitAndStopLossWs() is not supported yet')
-
-    def create_orders(self, orders: List[OrderRequest], params={}):
-        raise NotSupported(self.id + ' createOrders() is not supported yet')
-
     def edit_orders(self, orders: List[OrderRequest], params={}):
         raise NotSupported(self.id + ' editOrders() is not supported yet')
-
-    def create_order_ws(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, params={}):
-        raise NotSupported(self.id + ' createOrderWs() is not supported yet')
 
     def cancel_order(self, id: str, symbol: Str = None, params={}):
         raise NotSupported(self.id + ' cancelOrder() is not supported yet')
@@ -5918,9 +4530,6 @@ class Exchange(object):
         extendedParams = self.extend(params, {'clientOrderId': clientOrderId})
         return self.cancel_order('', symbol, extendedParams)
 
-    def cancel_order_ws(self, id: str, symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' cancelOrderWs() is not supported yet')
-
     def cancel_orders(self, ids: List[str], symbol: Str = None, params={}):
         raise NotSupported(self.id + ' cancelOrders() is not supported yet')
 
@@ -5935,37 +4544,13 @@ class Exchange(object):
         extendedParams = self.extend(params, {'clientOrderIds': clientOrderIds})
         return self.cancel_orders([], symbol, extendedParams)
 
-    def cancel_orders_ws(self, ids: List[str], symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' cancelOrdersWs() is not supported yet')
-
-    def cancel_all_orders(self, symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' cancelAllOrders() is not supported yet')
-
-    def cancel_all_orders_after(self, timeout: Int, params={}):
-        raise NotSupported(self.id + ' cancelAllOrdersAfter() is not supported yet')
-
     def cancel_orders_for_symbols(self, orders: List[CancellationRequest], params={}):
         raise NotSupported(self.id + ' cancelOrdersForSymbols() is not supported yet')
-
-    def cancel_all_orders_ws(self, symbol: Str = None, params={}):
-        raise NotSupported(self.id + ' cancelAllOrdersWs() is not supported yet')
-
-    def cancel_unified_order(self, order: Order, params={}):
-        return self.cancel_order(self.safe_string(order, 'id'), self.safe_string(order, 'symbol'), params)
 
     def fetch_orders(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
         if self.has['fetchOpenOrders'] and self.has['fetchClosedOrders']:
             raise NotSupported(self.id + ' fetchOrders() is not supported yet, consider using fetchOpenOrders() and fetchClosedOrders() instead')
         raise NotSupported(self.id + ' fetchOrders() is not supported yet')
-
-    def fetch_orders_ws(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchOrdersWs() is not supported yet')
-
-    def fetch_order_trades(self, id: str, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchOrderTrades() is not supported yet')
-
-    def watch_orders(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchOrders() is not supported yet')
 
     def fetch_open_orders(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
         if self.has['fetchOrders']:
@@ -5973,121 +4558,17 @@ class Exchange(object):
             return self.filter_by(orders, 'status', 'open')
         raise NotSupported(self.id + ' fetchOpenOrders() is not supported yet')
 
-    def fetch_open_orders_ws(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        if self.has['fetchOrdersWs']:
-            orders = self.fetch_orders_ws(symbol, since, limit, params)
-            return self.filter_by(orders, 'status', 'open')
-        raise NotSupported(self.id + ' fetchOpenOrdersWs() is not supported yet')
-
     def fetch_closed_orders(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
         if self.has['fetchOrders']:
             orders = self.fetch_orders(symbol, since, limit, params)
             return self.filter_by(orders, 'status', 'closed')
         raise NotSupported(self.id + ' fetchClosedOrders() is not supported yet')
 
-    def fetch_canceled_orders(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchCanceledOrders() is not supported yet')
-
-    def fetch_canceled_and_closed_orders(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchCanceledAndClosedOrders() is not supported yet')
-
-    def fetch_closed_orders_ws(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        if self.has['fetchOrdersWs']:
-            orders = self.fetch_orders_ws(symbol, since, limit, params)
-            return self.filter_by(orders, 'status', 'closed')
-        raise NotSupported(self.id + ' fetchClosedOrdersWs() is not supported yet')
-
     def fetch_my_trades(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
         raise NotSupported(self.id + ' fetchMyTrades() is not supported yet')
 
-    def fetch_my_liquidations(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchMyLiquidations() is not supported yet')
-
-    def fetch_liquidations(self, symbol: str, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchLiquidations() is not supported yet')
-
-    def fetch_my_trades_ws(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchMyTradesWs() is not supported yet')
-
-    def watch_my_trades(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' watchMyTrades() is not supported yet')
-
-    def fetch_greeks(self, symbol: str, params={}):
-        raise NotSupported(self.id + ' fetchGreeks() is not supported yet')
-
-    def fetch_all_greeks(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchAllGreeks() is not supported yet')
-
-    def fetch_option_chain(self, code: str, params={}):
-        raise NotSupported(self.id + ' fetchOptionChain() is not supported yet')
-
-    def fetch_option(self, symbol: str, params={}):
-        raise NotSupported(self.id + ' fetchOption() is not supported yet')
-
-    def fetch_convert_quote(self, fromCode: str, toCode: str, amount: Num = None, params={}):
-        raise NotSupported(self.id + ' fetchConvertQuote() is not supported yet')
-
-    def fetch_deposits_withdrawals(self, code: Str = None, since: Int = None, limit: Int = None, params={}):
-        """
-        fetch history of deposits and withdrawals
-        :param str [code]: unified currency code for the currency of the deposit/withdrawals, default is None
-        :param int [since]: timestamp in ms of the earliest deposit/withdrawal, default is None
-        :param int [limit]: max number of deposit/withdrawals to return, default is None
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: a list of `transaction structures <https://docs.ccxt.com/?id=transaction-structure>`
-        """
-        raise NotSupported(self.id + ' fetchDepositsWithdrawals() is not supported yet')
-
-    def fetch_deposits(self, code: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchDeposits() is not supported yet')
-
-    def fetch_withdrawals(self, code: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchWithdrawals() is not supported yet')
-
-    def fetch_deposits_ws(self, code: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchDepositsWs() is not supported yet')
-
-    def fetch_withdrawals_ws(self, code: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchWithdrawalsWs() is not supported yet')
-
-    def fetch_funding_rate_history(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchFundingRateHistory() is not supported yet')
-
-    def fetch_funding_history(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        raise NotSupported(self.id + ' fetchFundingHistory() is not supported yet')
-
-    def close_position(self, symbol: str, side: OrderSide = None, params={}):
-        raise NotSupported(self.id + ' closePosition() is not supported yet')
-
-    def close_all_positions(self, params={}):
-        raise NotSupported(self.id + ' closeAllPositions() is not supported yet')
-
-    def fetch_l3_order_book(self, symbol: str, limit: Int = None, params={}):
-        raise BadRequest(self.id + ' fetchL3OrderBook() is not supported yet')
-
     def parse_last_price(self, price, market: Market = None):
         raise NotSupported(self.id + ' parseLastPrice() is not supported yet')
-
-    def fetch_deposit_address(self, code: str, params={}):
-        if self.has['fetchDepositAddresses']:
-            depositAddresses = self.fetch_deposit_addresses([code], params)
-            depositAddress = self.safe_value(depositAddresses, code)
-            if depositAddress is None:
-                raise InvalidAddress(self.id + ' fetchDepositAddress() could not find a deposit address for ' + code + ', make sure you have created a corresponding deposit address in your wallet on the exchange website')
-            else:
-                return depositAddress
-        elif self.has['fetchDepositAddressesByNetwork']:
-            network = self.safe_string(params, 'network')
-            params = self.omit(params, 'network')
-            addressStructures = self.fetch_deposit_addresses_by_network(code, params)
-            if network is not None:
-                return self.safe_dict(addressStructures, network)
-            else:
-                keys = list(addressStructures.keys())
-                key = self.safe_string(keys, 0)
-                return self.safe_dict(addressStructures, key)
-        else:
-            raise NotSupported(self.id + ' fetchDepositAddress() is not supported yet')
 
     def account(self) -> BalanceAccount:
         return {
@@ -6160,42 +4641,6 @@ class Exchange(object):
             if tag is not None:
                 params = self.omit(params, 'tag')
         return [tag, params]
-
-    def create_limit_order(self, symbol: str, side: OrderSide, amount: float, price: float, params={}):
-        return self.create_order(symbol, 'limit', side, amount, price, params)
-
-    def create_limit_order_ws(self, symbol: str, side: OrderSide, amount: float, price: float, params={}):
-        return self.create_order_ws(symbol, 'limit', side, amount, price, params)
-
-    def create_market_order(self, symbol: str, side: OrderSide, amount: float, price: Num = None, params={}):
-        return self.create_order(symbol, 'market', side, amount, price, params)
-
-    def create_market_order_ws(self, symbol: str, side: OrderSide, amount: float, price: Num = None, params={}):
-        return self.create_order_ws(symbol, 'market', side, amount, price, params)
-
-    def create_limit_buy_order(self, symbol: str, amount: float, price: float, params={}):
-        return self.create_order(symbol, 'limit', 'buy', amount, price, params)
-
-    def create_limit_buy_order_ws(self, symbol: str, amount: float, price: float, params={}):
-        return self.create_order_ws(symbol, 'limit', 'buy', amount, price, params)
-
-    def create_limit_sell_order(self, symbol: str, amount: float, price: float, params={}):
-        return self.create_order(symbol, 'limit', 'sell', amount, price, params)
-
-    def create_limit_sell_order_ws(self, symbol: str, amount: float, price: float, params={}):
-        return self.create_order_ws(symbol, 'limit', 'sell', amount, price, params)
-
-    def create_market_buy_order(self, symbol: str, amount: float, params={}):
-        return self.create_order(symbol, 'market', 'buy', amount, None, params)
-
-    def create_market_buy_order_ws(self, symbol: str, amount: float, params={}):
-        return self.create_order_ws(symbol, 'market', 'buy', amount, None, params)
-
-    def create_market_sell_order(self, symbol: str, amount: float, params={}):
-        return self.create_order(symbol, 'market', 'sell', amount, None, params)
-
-    def create_market_sell_order_ws(self, symbol: str, amount: float, params={}):
-        return self.create_order_ws(symbol, 'market', 'sell', amount, None, params)
 
     def cost_to_precision(self, symbol: str, cost):
         if cost is None:
@@ -6333,70 +4778,6 @@ class Exchange(object):
         else:
             raise NotSupported(self.id + ' fetchMarketLeverageTiers() is not supported yet')
 
-    def create_post_only_order(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, params={}):
-        if not self.has['createPostOnlyOrder']:
-            raise NotSupported(self.id + ' createPostOnlyOrder() is not supported yet')
-        query = self.extend(params, {'postOnly': True})
-        return self.create_order(symbol, type, side, amount, price, query)
-
-    def create_post_only_order_ws(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, params={}):
-        if not self.has['createPostOnlyOrderWs']:
-            raise NotSupported(self.id + ' createPostOnlyOrderWs() is not supported yet')
-        query = self.extend(params, {'postOnly': True})
-        return self.create_order_ws(symbol, type, side, amount, price, query)
-
-    def create_reduce_only_order(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, params={}):
-        if not self.has['createReduceOnlyOrder']:
-            raise NotSupported(self.id + ' createReduceOnlyOrder() is not supported yet')
-        query = self.extend(params, {'reduceOnly': True})
-        return self.create_order(symbol, type, side, amount, price, query)
-
-    def create_reduce_only_order_ws(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, params={}):
-        if not self.has['createReduceOnlyOrderWs']:
-            raise NotSupported(self.id + ' createReduceOnlyOrderWs() is not supported yet')
-        query = self.extend(params, {'reduceOnly': True})
-        return self.create_order_ws(symbol, type, side, amount, price, query)
-
-    def create_stop_order(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, triggerPrice: Num = None, params={}):
-        if not self.has['createStopOrder']:
-            raise NotSupported(self.id + ' createStopOrder() is not supported yet')
-        if triggerPrice is None:
-            raise ArgumentsRequired(self.id + ' create_stop_order() requires a stopPrice argument')
-        query = self.extend(params, {'stopPrice': triggerPrice})
-        return self.create_order(symbol, type, side, amount, price, query)
-
-    def create_stop_order_ws(self, symbol: str, type: OrderType, side: OrderSide, amount: float, price: Num = None, triggerPrice: Num = None, params={}):
-        if not self.has['createStopOrderWs']:
-            raise NotSupported(self.id + ' createStopOrderWs() is not supported yet')
-        if triggerPrice is None:
-            raise ArgumentsRequired(self.id + ' createStopOrderWs() requires a stopPrice argument')
-        query = self.extend(params, {'stopPrice': triggerPrice})
-        return self.create_order_ws(symbol, type, side, amount, price, query)
-
-    def create_stop_limit_order(self, symbol: str, side: OrderSide, amount: float, price: float, triggerPrice: float, params={}):
-        if not self.has['createStopLimitOrder']:
-            raise NotSupported(self.id + ' createStopLimitOrder() is not supported yet')
-        query = self.extend(params, {'stopPrice': triggerPrice})
-        return self.create_order(symbol, 'limit', side, amount, price, query)
-
-    def create_stop_limit_order_ws(self, symbol: str, side: OrderSide, amount: float, price: float, triggerPrice: float, params={}):
-        if not self.has['createStopLimitOrderWs']:
-            raise NotSupported(self.id + ' createStopLimitOrderWs() is not supported yet')
-        query = self.extend(params, {'stopPrice': triggerPrice})
-        return self.create_order_ws(symbol, 'limit', side, amount, price, query)
-
-    def create_stop_market_order(self, symbol: str, side: OrderSide, amount: float, triggerPrice: float, params={}):
-        if not self.has['createStopMarketOrder']:
-            raise NotSupported(self.id + ' createStopMarketOrder() is not supported yet')
-        query = self.extend(params, {'stopPrice': triggerPrice})
-        return self.create_order(symbol, 'market', side, amount, None, query)
-
-    def create_stop_market_order_ws(self, symbol: str, side: OrderSide, amount: float, triggerPrice: float, params={}):
-        if not self.has['createStopMarketOrderWs']:
-            raise NotSupported(self.id + ' createStopMarketOrderWs() is not supported yet')
-        query = self.extend(params, {'stopPrice': triggerPrice})
-        return self.create_order_ws(symbol, 'market', side, amount, None, query)
-
     def create_sub_account(self, name: str, params={}):
         raise NotSupported(self.id + ' createSubAccount() is not supported yet')
 
@@ -6413,41 +4794,6 @@ class Exchange(object):
     def filter_by_symbols_since_limit(self, array, symbols: List[str] = None, since: Int = None, limit: Int = None, tail=False):
         result = self.filter_by_array(array, 'symbol', symbols, False)
         return self.filter_by_since_limit(result, since, limit, 'timestamp', tail)
-
-    def parse_last_prices(self, pricesData, symbols: List[str] = None, params={}):
-        #
-        # the value of tickers is either a dict or a list
-        #
-        # dict
-        #
-        #     {
-        #         'marketId1': {...},
-        #         'marketId2': {...},
-        #         ...
-        #     }
-        #
-        # list
-        #
-        #     [
-        #         {'market': 'marketId1', ...},
-        #         {'market': 'marketId2', ...},
-        #         ...
-        #     ]
-        #
-        results = []
-        if isinstance(pricesData, list):
-            for i in range(0, len(pricesData)):
-                priceData = self.extend(self.parse_last_price(pricesData[i]), params)
-                results.append(priceData)
-        else:
-            marketIds = list(pricesData.keys())
-            for i in range(0, len(marketIds)):
-                marketId = marketIds[i]
-                market = self.safe_market(marketId)
-                priceData = self.extend(self.parse_last_price(pricesData[marketId], market), params)
-                results.append(priceData)
-        symbols = self.market_symbols(symbols)
-        return self.filter_by_array(results, 'symbol', symbols)
 
     def parse_tickers(self, tickers, symbols: Strings = None, params={}):
         #
@@ -6618,31 +4964,6 @@ class Exchange(object):
         # for backwards compatibility
         return self.handle_trigger_and_params(params)
 
-    def is_post_only(self, isMarketOrder: bool, exchangeSpecificParam, params={}):
-        """
- @ignore
-        :param str type: Order type
-        :param boolean exchangeSpecificParam: exchange specific postOnly
-        :param dict [params]: exchange specific params
-        :returns boolean: True if a post only order, False otherwise
-        """
-        timeInForce = self.safe_string_upper(params, 'timeInForce')
-        postOnly = self.safe_bool_2(params, 'postOnly', 'post_only', False)
-        # we assume timeInForce is uppercase from safeStringUpper(params, 'timeInForce')
-        ioc = timeInForce == 'IOC'
-        fok = timeInForce == 'FOK'
-        timeInForcePostOnly = timeInForce == 'PO'
-        postOnly = postOnly or timeInForcePostOnly or exchangeSpecificParam
-        if postOnly:
-            if ioc or fok:
-                raise InvalidOrder(self.id + ' postOnly orders cannot have timeInForce equal to ' + timeInForce)
-            elif isMarketOrder:
-                raise InvalidOrder(self.id + ' market orders cannot be postOnly')
-            else:
-                return True
-        else:
-            return False
-
     def handle_post_only(self, isMarketOrder: bool, exchangeSpecificPostOnlyOption: bool, params: Any = {}):
         """
  @ignore
@@ -6669,24 +4990,6 @@ class Exchange(object):
                 return [True, params]
         return [False, params]
 
-    def fetch_last_prices(self, symbols: Strings = None, params={}):
-        raise NotSupported(self.id + ' fetchLastPrices() is not supported yet')
-
-    def fetch_trading_fees(self, params={}):
-        raise NotSupported(self.id + ' fetchTradingFees() is not supported yet')
-
-    def fetch_trading_fees_ws(self, params={}):
-        raise NotSupported(self.id + ' fetchTradingFeesWs() is not supported yet')
-
-    def fetch_trading_fee(self, symbol: str, params={}):
-        if not self.has['fetchTradingFees']:
-            raise NotSupported(self.id + ' fetchTradingFee() is not supported yet')
-        fees = self.fetch_trading_fees(params)
-        return self.safe_dict(fees, symbol)
-
-    def fetch_convert_currencies(self, params={}):
-        raise NotSupported(self.id + ' fetchConvertCurrencies() is not supported yet')
-
     def parse_open_interest(self, interest, market: Market = None):
         raise NotSupported(self.id + ' parseOpenInterest() is not supported yet')
 
@@ -6707,22 +5010,6 @@ class Exchange(object):
         sorted = self.sort_by(interests, 'timestamp')
         symbol = self.safe_string(market, 'symbol')
         return self.filter_by_symbol_since_limit(sorted, symbol, since, limit)
-
-    def fetch_funding_rate(self, symbol: str, params={}):
-        if self.has['fetchFundingRates']:
-            self.load_markets()
-            market = self.market(symbol)
-            symbol = market['symbol']
-            if not market['contract']:
-                raise BadSymbol(self.id + ' fetchFundingRate() supports contract markets only')
-            rates = self.fetch_funding_rates([symbol], params)
-            rate = self.safe_value(rates, symbol)
-            if rate is None:
-                raise NullResponse(self.id + ' fetchFundingRate() returned no data for ' + symbol)
-            else:
-                return rate
-        else:
-            raise NotSupported(self.id + ' fetchFundingRate() is not supported yet')
 
     def fetch_funding_interval(self, symbol: str, params={}):
         if self.has['fetchFundingIntervals']:
@@ -6807,23 +5094,6 @@ class Exchange(object):
                 raise ExchangeError(self.id + ' does not support timeInForce "' + timeInForce + '"')
             return exchangeValue
         return None
-
-    def convert_type_to_account(self, account):
-        """
- @ignore
- Must add accountsByType to self.options to use self method
-        :param str account: key for account name in self.options['accountsByType']
-        :returns: the exchange specific account name or the isolated margin id for transfers
-        """
-        accountsByType = self.safe_dict(self.options, 'accountsByType', {})
-        lowercaseAccount = account.lower()
-        if lowercaseAccount in accountsByType:
-            return accountsByType[lowercaseAccount]
-        elif (account in self.markets) or (account in self.markets_by_id):
-            market = self.market(account)
-            return market['id']
-        else:
-            return account
 
     def check_required_argument(self, methodName: str, argument, argumentName, options=[]):
         """
@@ -6951,21 +5221,6 @@ class Exchange(object):
             results.append(self.parse_ws_ohlcv(ohlcvs[i], market))
         return results
 
-    def fetch_transactions(self, code: Str = None, since: Int = None, limit: Int = None, params={}):
-        """
- @deprecated
-        *DEPRECATED* use fetchDepositsWithdrawals instead
-        :param str code: unified currency code for the currency of the deposit/withdrawals, default is None
-        :param int [since]: timestamp in ms of the earliest deposit/withdrawal, default is None
-        :param int [limit]: max number of deposit/withdrawals to return, default is None
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: a list of `transaction structures <https://docs.ccxt.com/?id=transaction-structure>`
-        """
-        if self.has['fetchDepositsWithdrawals']:
-            return self.fetch_deposits_withdrawals(code, since, limit, params)
-        else:
-            raise NotSupported(self.id + ' fetchTransactions() is not supported yet')
-
     def filter_by_array_positions(self, objects, key: IndexType, values=None, indexed=True):
         """
  @ignore
@@ -6995,75 +5250,6 @@ class Exchange(object):
             maxEntriesPerRequest = 1000  # default to 1000
         return [maxEntriesPerRequest, params]
 
-    def fetch_paginated_call_dynamic(self, method: str, symbol: Str = None, since: Int = None, limit: Int = None, params={}, maxEntriesPerRequest: Int = None, removeRepeated=True):
-        maxCalls = None
-        maxCalls, params = self.handle_option_and_params(params, method, 'paginationCalls', 10)
-        maxRetries = None
-        maxRetries, params = self.handle_option_and_params(params, method, 'maxRetries', 3)
-        paginationDirection = None
-        paginationDirection, params = self.handle_option_and_params(params, method, 'paginationDirection', 'backward')
-        paginationTimestamp = None
-        removeRepeatedOption = removeRepeated
-        removeRepeatedOption, params = self.handle_option_and_params(params, method, 'removeRepeated', removeRepeated)
-        calls = 0
-        result = []
-        errors = 0
-        until = self.safe_integer_n(params, ['until', 'untill', 'till'])  # do not omit it from params here
-        maxEntriesPerRequest, params = self.handle_max_entries_per_request_and_params(method, maxEntriesPerRequest, params)
-        if (paginationDirection == 'forward'):
-            if since is None:
-                raise ArgumentsRequired(self.id + ' pagination requires a since argument when paginationDirection set to forward')
-            paginationTimestamp = since
-        while((calls < maxCalls)):
-            calls += 1
-            try:
-                if paginationDirection == 'backward':
-                    # do it backwards, starting from the last
-                    # UNTIL filtering is required in order to work
-                    if paginationTimestamp is not None:
-                        params['until'] = paginationTimestamp - 1
-                    response = getattr(self, method)(symbol, None, maxEntriesPerRequest, params)
-                    responseLength = len(response)
-                    if self.verbose:
-                        backwardMessage = 'Dynamic pagination call ' + self.number_to_string(calls) + ' method ' + method + ' response length ' + self.number_to_string(responseLength)
-                        if paginationTimestamp is not None:
-                            backwardMessage += ' timestamp ' + self.number_to_string(paginationTimestamp)
-                        self.log(backwardMessage)
-                    if responseLength == 0:
-                        break
-                    errors = 0
-                    result = self.array_concat(result, response)
-                    firstElement = self.safe_value(response, 0)
-                    paginationTimestamp = self.safe_integer_2(firstElement, 'timestamp', 0)
-                    if (since is not None) and (paginationTimestamp <= since):
-                        break
-                else:
-                    # do it forwards, starting from the since
-                    response = getattr(self, method)(symbol, paginationTimestamp, maxEntriesPerRequest, params)
-                    responseLength = len(response)
-                    if self.verbose:
-                        forwardMessage = 'Dynamic pagination call ' + self.number_to_string(calls) + ' method ' + method + ' response length ' + self.number_to_string(responseLength)
-                        if paginationTimestamp is not None:
-                            forwardMessage += ' timestamp ' + self.number_to_string(paginationTimestamp)
-                        self.log(forwardMessage)
-                    if responseLength == 0:
-                        break
-                    errors = 0
-                    result = self.array_concat(result, response)
-                    last = self.safe_value(response, responseLength - 1)
-                    paginationTimestamp = self.safe_integer(last, 'timestamp') + 1
-                    if (until is not None) and (paginationTimestamp >= until):
-                        break
-            except Exception as e:
-                errors += 1
-                if errors > maxRetries:
-                    raise e
-        uniqueResults = result
-        if removeRepeatedOption:
-            uniqueResults = self.remove_repeated_elements_from_array(result)
-        key = 0 if (method == 'fetchOHLCV') else 'timestamp'
-        return self.filter_by_since_limit(uniqueResults, since, limit, key)
-
     def safe_deterministic_call(self, method: str, symbol: Str = None, since: Int = None, limit: Int = None, timeframe: Str = None, params={}):
         maxRetries = None
         maxRetries, params = self.handle_option_and_params(params, method, 'maxRetries', 3)
@@ -7081,132 +5267,6 @@ class Exchange(object):
                 if errors > maxRetries:
                     raise e
         return []
-
-    def fetch_paginated_call_deterministic(self, method: str, symbol: Str = None, since: Int = None, limit: Int = None, timeframe: Str = None, params={}, maxEntriesPerRequest=None):
-        maxCalls = None
-        maxCalls, params = self.handle_option_and_params(params, method, 'paginationCalls', 10)
-        maxEntriesPerRequest, params = self.handle_max_entries_per_request_and_params(method, maxEntriesPerRequest, params)
-        current = self.milliseconds()
-        tasks = []
-        time = self.parse_timeframe(timeframe) * 1000
-        step = time * maxEntriesPerRequest
-        currentSince = current - (maxCalls * step) - 1
-        if since is not None:
-            currentSince = max(currentSince, since)
-        else:
-            currentSince = max(currentSince, 1241440531000)  # avoid timestamps older than 2009
-        until = self.safe_integer_2(params, 'until', 'till')  # do not omit it here
-        if until is not None:
-            requiredCalls = int(math.ceil((until - since)) / step)
-            if requiredCalls > maxCalls:
-                raise BadRequest(self.id + ' the number of required calls is greater than the max number of calls allowed, either increase the paginationCalls or decrease the since-until gap. Current paginationCalls limit is ' + str(maxCalls) + ' required calls is ' + str(requiredCalls))
-        for i in range(0, maxCalls):
-            if (until is not None) and (currentSince >= until):
-                break
-            if currentSince >= current:
-                break
-            tasks.append(self.safe_deterministic_call(method, symbol, currentSince, maxEntriesPerRequest, timeframe, params))
-            currentSince = self.sum(currentSince, step) - 1
-        results = tasks
-        result = []
-        for i in range(0, len(results)):
-            result = self.array_concat(result, results[i])
-        uniqueResults = self.remove_repeated_elements_from_array(result)
-        key = 0 if (method == 'fetchOHLCV') else 'timestamp'
-        return self.filter_by_since_limit(uniqueResults, since, limit, key)
-
-    def fetch_paginated_call_cursor(self, method: str, symbol: Str = None, since=None, limit=None, params={}, cursorReceived=None, cursorSent=None, cursorIncrement=None, maxEntriesPerRequest=None):
-        maxCalls = None
-        maxCalls, params = self.handle_option_and_params(params, method, 'paginationCalls', 10)
-        maxRetries = None
-        maxRetries, params = self.handle_option_and_params(params, method, 'maxRetries', 3)
-        maxEntriesPerRequest, params = self.handle_max_entries_per_request_and_params(method, maxEntriesPerRequest, params)
-        cursorValue = None
-        i = 0
-        errors = 0
-        result = []
-        timeframe = self.safe_string(params, 'timeframe')
-        params = self.omit(params, 'timeframe')  # reading the timeframe from the method arguments to avoid changing the signature
-        while(i < maxCalls):
-            try:
-                if cursorValue is not None:
-                    if cursorIncrement is not None:
-                        cursorValue = self.parse_to_int(cursorValue) + cursorIncrement
-                    params[cursorSent] = cursorValue
-                response = None
-                if method == 'fetchAccounts':
-                    response = getattr(self, method)(params)
-                elif method == 'getLeverageTiersPaginated' or method == 'fetchPositions':
-                    response = getattr(self, method)(symbol, params)
-                elif method == 'fetchOpenInterestHistory':
-                    response = getattr(self, method)(symbol, timeframe, since, maxEntriesPerRequest, params)
-                else:
-                    response = getattr(self, method)(symbol, since, maxEntriesPerRequest, params)
-                errors = 0
-                responseLength = len(response)
-                if self.verbose:
-                    cursorString = '' if (cursorValue is None) else cursorValue
-                    iteration = (i + 1)
-                    cursorMessage = 'Cursor pagination call ' + str(iteration) + ' method ' + method + ' response length ' + str(responseLength) + ' cursor ' + cursorString
-                    self.log(cursorMessage)
-                if responseLength == 0:
-                    break
-                result = self.array_concat(result, response)
-                last = self.safe_dict(response, responseLength - 1)
-                # cursorValue = self.safe_value(last['info'], cursorReceived)
-                cursorValue = None  # search for the cursor
-                for j in range(0, responseLength):
-                    index = responseLength - j - 1
-                    entry = self.safe_dict(response, index)
-                    info = self.safe_dict(entry, 'info')
-                    cursor = self.safe_value(info, cursorReceived)
-                    if cursor is not None:
-                        cursorValue = cursor
-                        break
-                if cursorValue is None:
-                    break
-                lastTimestamp = self.safe_integer(last, 'timestamp')
-                if lastTimestamp is not None and lastTimestamp < since:
-                    break
-            except Exception as e:
-                errors += 1
-                if errors > maxRetries:
-                    raise e
-            i += 1
-        sorted = self.sort_cursor_paginated_result(result)
-        key = 0 if (method == 'fetchOHLCV') else 'timestamp'
-        return self.filter_by_since_limit(sorted, since, limit, key)
-
-    def fetch_paginated_call_incremental(self, method: str, symbol: Str = None, since=None, limit=None, params={}, pageKey=None, maxEntriesPerRequest=None):
-        maxCalls = None
-        maxCalls, params = self.handle_option_and_params(params, method, 'paginationCalls', 10)
-        maxRetries = None
-        maxRetries, params = self.handle_option_and_params(params, method, 'maxRetries', 3)
-        maxEntriesPerRequest, params = self.handle_max_entries_per_request_and_params(method, maxEntriesPerRequest, params)
-        i = 0
-        errors = 0
-        result = []
-        while(i < maxCalls):
-            try:
-                params[pageKey] = i + 1
-                response = getattr(self, method)(symbol, since, maxEntriesPerRequest, params)
-                errors = 0
-                responseLength = len(response)
-                if self.verbose:
-                    iteration = (i + str(1))
-                    incrementalMessage = 'Incremental pagination call ' + iteration + ' method ' + method + ' response length ' + str(responseLength)
-                    self.log(incrementalMessage)
-                if responseLength == 0:
-                    break
-                result = self.array_concat(result, response)
-            except Exception as e:
-                errors += 1
-                if errors > maxRetries:
-                    raise e
-            i += 1
-        sorted = self.sort_cursor_paginated_result(result)
-        key = 0 if (method == 'fetchOHLCV') else 'timestamp'
-        return self.filter_by_since_limit(sorted, since, limit, key)
 
     def sort_cursor_paginated_result(self, result):
         first = self.safe_value(result, 0)
@@ -7369,102 +5429,8 @@ class Exchange(object):
     def parse_leverage(self, leverage: dict, market: Market = None):
         raise NotSupported(self.id + ' parseLeverage() is not supported yet')
 
-    def parse_conversions(self, conversions: List[Any], code: Str = None, fromCurrencyKey: Str = None, toCurrencyKey: Str = None, since: Int = None, limit: Int = None, params={}):
-        conversions = self.to_array(conversions)
-        result = []
-        fromCurrency = None
-        toCurrency = None
-        for i in range(0, len(conversions)):
-            entry = conversions[i]
-            fromId = self.safe_string(entry, fromCurrencyKey)
-            toId = self.safe_string(entry, toCurrencyKey)
-            if fromId is not None:
-                fromCurrency = self.safe_currency(fromId)
-            if toId is not None:
-                toCurrency = self.safe_currency(toId)
-            conversion = self.extend(self.parse_conversion(entry, fromCurrency, toCurrency), params)
-            result.append(conversion)
-        sorted = self.sort_by(result, 'timestamp')
-        currency = None
-        if code is not None:
-            currency = self.safe_currency(code)
-            code = currency['code']
-        if code is None:
-            return self.filter_by_since_limit(sorted, since, limit)
-        fromConversion = self.filter_by(sorted, 'fromCurrency', code)
-        toConversion = self.filter_by(sorted, 'toCurrency', code)
-        both = self.array_concat(fromConversion, toConversion)
-        return self.filter_by_since_limit(both, since, limit)
-
     def parse_conversion(self, conversion: dict, fromCurrency: Currency = None, toCurrency: Currency = None):
         raise NotSupported(self.id + ' parseConversion() is not supported yet')
-
-    def convert_expire_date(self, date: str):
-        # parse YYMMDD to datetime string
-        year = date[0:2]
-        month = date[2:4]
-        day = date[4:6]
-        reconstructedDate = '20' + year + '-' + month + '-' + day + 'T00:00:00Z'
-        return reconstructedDate
-
-    def convert_expire_date_to_market_id_date(self, date: str):
-        # parse 240119 to 19JAN24
-        year = date[0:2]
-        monthRaw = date[2:4]
-        month = None
-        day = date[4:6]
-        if monthRaw == '01':
-            month = 'JAN'
-        elif monthRaw == '02':
-            month = 'FEB'
-        elif monthRaw == '03':
-            month = 'MAR'
-        elif monthRaw == '04':
-            month = 'APR'
-        elif monthRaw == '05':
-            month = 'MAY'
-        elif monthRaw == '06':
-            month = 'JUN'
-        elif monthRaw == '07':
-            month = 'JUL'
-        elif monthRaw == '08':
-            month = 'AUG'
-        elif monthRaw == '09':
-            month = 'SEP'
-        elif monthRaw == '10':
-            month = 'OCT'
-        elif monthRaw == '11':
-            month = 'NOV'
-        elif monthRaw == '12':
-            month = 'DEC'
-        reconstructedDate = day + month + year
-        return reconstructedDate
-
-    def convert_market_id_expire_date(self, date: str):
-        # parse 03JAN24 to 240103.
-        monthMappping = {
-            'JAN': '01',
-            'FEB': '02',
-            'MAR': '03',
-            'APR': '04',
-            'MAY': '05',
-            'JUN': '06',
-            'JUL': '07',
-            'AUG': '08',
-            'SEP': '09',
-            'OCT': '10',
-            'NOV': '11',
-            'DEC': '12',
-        }
-        # if exchange omits first zero and provides i.e. '3JAN24' instead of '03JAN24'
-        if len(date) == 6:
-            date = '0' + date
-        year = date[0:2]
-        monthName = date[2:5]
-        month = self.safe_string(monthMappping, monthName)
-        day = date[5:7]
-        reconstructedDate = day + month + year
-        return reconstructedDate
 
     def fetch_position_history(self, symbol: str, since: Int = None, limit: Int = None, params={}):
         """
@@ -7518,94 +5484,6 @@ class Exchange(object):
         """
         raise NotSupported(self.id + ' fetchTransfer() is not supported yet')
 
-    def fetch_transfers(self, code: Str = None, since: Int = None, limit: Int = None, params={}):
-        """
-        fetches a transfer
-        :param str id: transfer id
-        :param int [since]: timestamp in ms of the earliest transfer to fetch
-        :param int [limit]: the maximum amount of transfers to fetch
-        :param dict params: extra parameters specific to the exchange api endpoint
-        :returns dict: a `transfer structure <https://docs.ccxt.com/?id=transfer-structure>`
-        """
-        raise NotSupported(self.id + ' fetchTransfers() is not supported yet')
-
-    def un_watch_ohlcv(self, symbol: str, timeframe: str = '1m', params={}):
-        """
-        watches historical candlestick data containing the open, high, low, and close price, and the volume of a market
-        :param str symbol: unified symbol of the market to fetch OHLCV data for
-        :param str timeframe: the length of time each candle represents
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns int[][]: A list of candles ordered, open, high, low, close, volume
-        """
-        raise NotSupported(self.id + ' unWatchOHLCV() is not supported yet')
-
-    def watch_mark_price(self, symbol: str, params={}):
-        """
-        watches a mark price for a specific market
-        :param str symbol: unified symbol of the market to fetch the ticker for
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: a `ticker structure <https://docs.ccxt.com/?id=ticker-structure>`
-        """
-        raise NotSupported(self.id + ' watchMarkPrice() is not supported yet')
-
-    def watch_mark_prices(self, symbols: Strings = None, params={}):
-        """
-        watches the mark price for all markets
-        :param str[] symbols: unified symbol of the market to fetch the ticker for
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: a `ticker structure <https://docs.ccxt.com/?id=ticker-structure>`
-        """
-        raise NotSupported(self.id + ' watchMarkPrices() is not supported yet')
-
-    def withdraw_ws(self, code: str, amount: float, address: str, tag: Str = None, params={}):
-        """
-        make a withdrawal
-        :param str code: unified currency code
-        :param float amount: the amount to withdraw
-        :param str address: the address to withdraw to
-        :param str tag:
-        :param dict [params]: extra parameters specific to the bitvavo api endpoint
-        :returns dict: a `transaction structure <https://docs.ccxt.com/?id=transaction-structure>`
-        """
-        raise NotSupported(self.id + ' withdrawWs() is not supported yet')
-
-    def un_watch_my_trades(self, symbol: Str = None, params={}):
-        """
-        unWatches information on multiple trades made by the user
-        :param str symbol: unified market symbol of the market orders were made in
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict[]: a list of `order structures <https://docs.ccxt.com/?id=order-structure>`
-        """
-        raise NotSupported(self.id + ' unWatchMyTrades() is not supported yet')
-
-    def create_orders_ws(self, orders: List[OrderRequest], params={}):
-        """
-        create a list of trade orders
-        :param Array orders: list of orders to create, each object should contain the parameters required by createOrder, namely symbol, type, side, amount, price and params
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: an `order structure <https://docs.ccxt.com/?id=order-structure>`
-        """
-        raise NotSupported(self.id + ' createOrdersWs() is not supported yet')
-
-    def fetch_orders_by_status_ws(self, status: str, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        """
-        watches information on open orders with bid(buy) and ask(sell) prices, volumes and other data
-        :param str symbol: unified symbol of the market to fetch the order book for
-        :param int [limit]: the maximum amount of order book entries to return
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: A dictionary of `order book structures <https://docs.ccxt.com/?id=order-book-structure>` indexed by market symbols
-        """
-        raise NotSupported(self.id + ' fetchOrdersByStatusWs() is not supported yet')
-
-    def un_watch_bids_asks(self, symbols: Strings = None, params={}):
-        """
-        unWatches best bid & ask for symbols
-        :param str[] symbols: unified symbol of the market to fetch the ticker for
-        :param dict [params]: extra parameters specific to the exchange API endpoint
-        :returns dict: a `ticker structure <https://docs.ccxt.com/?id=ticker-structure>`
-        """
-        raise NotSupported(self.id + ' unWatchBidsAsks() is not supported yet')
-
     def clean_unsubscription(self, client, subHash: str, unsubHash: str, subHashIsPrefix=False):
         if unsubHash in client.subscriptions:
             del client.subscriptions[unsubHash]
@@ -7629,56 +5507,140 @@ class Exchange(object):
                     client.reject(error, future)
         client.resolve(True, unsubHash)
 
-    def clean_cache(self, subscription: dict):
-        topic = self.safe_string(subscription, 'topic')
-        symbols = self.safe_list(subscription, 'symbols', [])
-        symbolsLength = len(symbols)
-        if topic == 'ohlcv':
-            symbolsAndTimeframes = self.safe_list(subscription, 'symbolsAndTimeframes', [])
-            for i in range(0, len(symbolsAndTimeframes)):
-                symbolAndTimeFrame = symbolsAndTimeframes[i]
-                symbol = self.safe_string(symbolAndTimeFrame, 0)
-                timeframe = self.safe_string(symbolAndTimeFrame, 1)
-                if (self.ohlcvs is not None) and (symbol in self.ohlcvs):
-                    if timeframe in self.ohlcvs[symbol]:
-                        del self.ohlcvs[symbol][timeframe]
-        elif symbolsLength > 0:
-            for i in range(0, len(symbols)):
-                symbol = symbols[i]
-                if topic == 'trades':
-                    if symbol in self.trades:
-                        del self.trades[symbol]
-                elif topic == 'orderbook':
-                    if symbol in self.orderbooks:
-                        del self.orderbooks[symbol]
-                elif topic == 'ticker':
-                    if symbol in self.tickers:
-                        del self.tickers[symbol]
-                elif topic == 'bidsasks':
-                    if symbol in self.bidsasks:
-                        del self.bidsasks[symbol]
-        else:
-            if topic == 'myTrades' and (self.myTrades is not None):
-                self.myTrades = None
-            elif topic == 'orders' and (self.orders is not None):
-                self.orders = None
-            elif topic == 'positions' and (self.positions is not None):
-                self.positions = None
-                clients = list(self.clients.values())
-                for i in range(0, len(clients)):
-                    client = clients[i]
-                    futures = client.futures
-                    if (futures is not None) and ('fetchPositionsSnapshot' in futures):
-                        del futures['fetchPositionsSnapshot']
-            elif (topic == 'ticker' or topic == 'markPrice') and (self.tickers is not None):
-                tickerSymbols = list(self.tickers.keys())
-                for i in range(0, len(tickerSymbols)):
-                    tickerSymbol = tickerSymbols[i]
-                    if tickerSymbol in self.tickers:
-                        del self.tickers[tickerSymbol]
-            elif topic == 'bidsasks' and (self.bidsasks is not None):
-                bidsaskSymbols = list(self.bidsasks.keys())
-                for i in range(0, len(bidsaskSymbols)):
-                    bidsaskSymbol = bidsaskSymbols[i]
-                    if bidsaskSymbol in self.bidsasks:
-                        del self.bidsasks[bidsaskSymbol]
+    # =========================================================================
+    # Async REST interface
+    # =========================================================================
+    #
+    # Provides async variants of the core HTTP chain so that callers in async
+    # contexts (strategies, WebSocket handlers) can await exchange methods
+    # directly instead of wrapping them with asyncio.to_thread().
+    #
+    # Usage:
+    #   response = await exchange._request_async(endpoint, params)
+    #
+    # The sync interface (fetch / fetch2 / request / _request) is unchanged.
+    # =========================================================================
+
+    _async_client = None  # lazily initialized httpx.AsyncClient
+
+    async def _get_async_client(self):
+        """Lazily create a shared httpx.AsyncClient."""
+        if self._async_client is None:
+            import httpx
+            timeout = httpx.Timeout(self.timeout / 1000, connect=self.timeout / 1000)
+            self._async_client = httpx.AsyncClient(timeout=timeout, verify=self.verify and self.validateServerSsl)
+        return self._async_client
+
+    async def close_async(self):
+        """Close the async HTTP client. Call this on shutdown."""
+        if self._async_client is not None:
+            await self._async_client.aclose()
+            self._async_client = None
+
+    async def throttle_async(self, cost=None):
+        """Async-friendly rate limiter using asyncio.sleep instead of time.sleep."""
+        import asyncio
+        now = float(self.milliseconds())
+        elapsed = now - self.lastRestRequestTimestamp
+        cost = 1 if cost is None else cost
+        sleep_time = self.rateLimit * cost
+        if elapsed < sleep_time:
+            delay = sleep_time - elapsed
+            await asyncio.sleep(delay / 1000.0)
+
+    async def fetch_async(self, url, method='GET', headers=None, body=None):
+        """Async HTTP request using httpx. Mirrors fetch() error handling."""
+        request_headers = self.prepare_request_headers(headers)
+
+        if self.verbose:
+            self.log("\nfetch_async Request:", self.id, method, url, "RequestHeaders:", request_headers, "RequestBody:", body)
+        self.logger.debug("%s %s, Request: %s %s", method, url, request_headers, body)
+
+        client = await self._get_async_client()
+
+        http_response = None
+        http_status_code = None
+        http_status_text = None
+        json_response = None
+        try:
+            response = await client.request(
+                method,
+                url,
+                content=body.encode() if body else None,
+                headers=request_headers,
+            )
+            http_status_code = response.status_code
+            http_status_text = response.reason_phrase
+            http_response = response.text
+            json_response = self.parse_json(http_response)
+
+            if self.enableLastHttpResponse:
+                self.last_http_response = http_response
+            if self.enableLastJsonResponse:
+                self.last_json_response = json_response
+            if self.enableLastResponseHeaders:
+                self.last_response_headers = dict(response.headers)
+            if self.verbose:
+                self.log("\nfetch_async Response:", self.id, method, url, http_status_code, "ResponseHeaders:", dict(response.headers), "ResponseBody:", http_response)
+            self.logger.debug("%s %s, Response: %s %s %s", method, url, http_status_code, dict(response.headers), http_response)
+
+            if http_status_code >= 400:
+                self.handle_errors(http_status_code, http_status_text, url, method, dict(response.headers), http_response, json_response, request_headers, body)
+                self.handle_http_status_code(http_status_code, http_status_text, url, method, http_response)
+
+        except ExchangeError:
+            raise
+        except NetworkError:
+            raise
+        except Exception as e:
+            import httpx as _httpx
+            if isinstance(e, _httpx.TimeoutException):
+                raise RequestTimeout(' '.join([self.id, method, url])) from e
+            elif isinstance(e, _httpx.ConnectError):
+                raise NetworkError(' '.join([self.id, method, url])) from e
+            raise ExchangeError(' '.join([self.id, method, url])) from e
+
+        self.handle_errors(http_status_code, http_status_text, url, method, dict(response.headers), http_response, json_response, request_headers, body)
+        if json_response is not None:
+            return json_response
+        return http_response
+
+    async def fetch2_async(self, path, api='public', method='GET', params=None, headers=None, body=None, config=None):
+        """Async version of fetch2: rate limiting + signing + fetch_async."""
+        if params is None:
+            params = {}
+        if config is None:
+            config = {}
+        if self.enableRateLimit:
+            cost = self.calculate_rate_limiter_cost(api, method, path, params, config)
+            await self.throttle_async(cost)
+        self.lastRestRequestTimestamp = self.milliseconds()
+        request = self.sign(path, api, method, params, headers, body)
+        self.last_request_headers = request['headers']
+        self.last_request_body = request['body']
+        self.last_request_url = request['url']
+        return await self.fetch_async(request['url'], request['method'], request['headers'], request['body'])
+
+    async def request_async(self, path, api='public', method='GET', params=None, headers=None, body=None, config=None):
+        """Async version of request()."""
+        return await self.fetch2_async(path, api, method, params or {}, headers, body, config or {})
+
+    async def _request_async(self, endpoint, params=None, config=None):
+        """Async version of _request(): unified endpoint handler."""
+        if params is None:
+            params = {}
+
+        endpoint_config = endpoint.config if endpoint is not None else {}
+        if config:
+            endpoint_config = self.extend(endpoint_config, config)
+
+        path = endpoint.path
+        if isinstance(params, dict) and self.extract_params(path):
+            path, params = self.resolve_path(path, params)
+
+        response = await self.request_async(path, endpoint.api, endpoint.method, params, config=endpoint_config)
+
+        if hasattr(self, 'parse_error') and callable(getattr(self, 'parse_error')):
+            self.parse_error(response)
+
+        return response

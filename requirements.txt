@@ -1,5 +1,6 @@
 PyNaCl
 requests
+httpx
 curl_cffi
 numpy
 python-dotenv
