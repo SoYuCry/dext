@@ -58,13 +58,17 @@ def _normalize_symbol(raw: str) -> str:
 
 
 class BinanceWS(WebsocketClient):
-    """Binance WS market data client (bookTicker + optional depth)."""
+    """Binance WS market data client (bookTicker + optional depth).
+
+    By default only subscribes to bookTicker. Set include_depth=True to
+    also subscribe to depth snapshots.
+    """
 
     def __init__(
         self,
         symbols: Iterable[str],
         on_event,
-        include_depth: bool = True,
+        include_depth: bool = False,
         depth_level: int = 5,
         depth_interval_ms: int = 100,
     ) -> None:
@@ -72,6 +76,7 @@ class BinanceWS(WebsocketClient):
         self.include_depth = include_depth
         self.depth_level = depth_level
         self.depth_interval_ms = depth_interval_ms
+        self._last_bbo: Dict[str, Tuple[float, float, float, float]] = {}  # symbol → (bid, bid_qty, ask, ask_qty)
 
         streams = [f"{s.lower()}@bookTicker" for s in self.symbols]
         if self.include_depth:
@@ -100,6 +105,13 @@ class BinanceWS(WebsocketClient):
             if not parsed:
                 return
             bid_price, bid_qty, ask_price, ask_qty = parsed
+            # Deduplicate: skip if BBO unchanged
+            key = symbol.upper()
+            prev = self._last_bbo.get(key)
+            current = (bid_price, bid_qty, ask_price, ask_qty)
+            if prev == current:
+                return
+            self._last_bbo[key] = current
             event = {
                 "exchange": "binance",
                 "symbol": symbol.upper(),
@@ -130,6 +142,51 @@ class BinanceWS(WebsocketClient):
                 "raw": data,
             }
             await self.on_event(event)
+
+
+class BinanceAggTradeWS(WebsocketClient):
+    """Binance aggregated trade stream.
+
+    Pushes individual trades in real-time — essential for order flow analysis.
+    Each event contains: price, quantity, side (buyer_is_maker), timestamp.
+
+    Usage:
+        ws = BinanceAggTradeWS(['BTCUSDT'], on_event)
+        await ws.run_forever()
+    """
+
+    def __init__(self, symbols: Iterable[str], on_event) -> None:
+        self.symbols = [_normalize_symbol(s) for s in symbols]
+        streams = "/".join(f"{s.lower()}@aggTrade" for s in self.symbols)
+        url = "wss://stream.binance.com:9443/stream?streams=" + streams
+        super().__init__(name="binance_aggtrade", stream_url=url, on_event=on_event)
+
+    async def subscribe(self, ws) -> None:
+        return None
+
+    async def handle_message(self, raw: str, ts_local_ms: int) -> None:
+        msg = self.decode(raw)
+        data = msg.get("data") or {}
+        if not data or data.get("e") != "aggTrade":
+            return
+        symbol = data.get("s", "")
+        if symbol.upper() not in self.symbols:
+            return
+        event = {
+            "exchange": "binance",
+            "symbol": symbol.upper(),
+            "stream": "aggTrade",
+            "ts_exchange": data.get("T"),
+            "ts_local": ts_local_ms,
+            "agg_trade_id": data.get("a"),
+            "price": float(data.get("p", 0)),
+            "quantity": float(data.get("q", 0)),
+            "first_trade_id": data.get("f"),
+            "last_trade_id": data.get("l"),
+            "buyer_is_maker": data.get("m", False),
+            "raw": data,
+        }
+        await self.on_event(event)
 
 
 class BinanceUserWS(WebsocketClient):
