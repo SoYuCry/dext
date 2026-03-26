@@ -250,6 +250,7 @@ class AsterBookTickerWS(WebsocketClient):
 
     def __init__(self, symbols: Iterable[str], on_event) -> None:
         self.symbols = [s.lower() for s in symbols]
+        self._last_bbo = {}  # symbol → (bid, bid_qty, ask, ask_qty)
         streams = "/".join(f"{s}@bookTicker" for s in self.symbols)
         url = f"wss://fstream.asterdex.com/stream?streams={streams}"
         super().__init__(name="aster_bookticker", stream_url=url, on_event=on_event)
@@ -272,6 +273,12 @@ class AsterBookTickerWS(WebsocketClient):
             ask_qty = float(data.get("A", 0))
         except (TypeError, ValueError):
             return
+        # Deduplicate: skip if BBO unchanged
+        current = (best_bid, bid_qty, best_ask, ask_qty)
+        prev = self._last_bbo.get(symbol)
+        if prev == current:
+            return
+        self._last_bbo[symbol] = current
         event = {
             "exchange": "aster",
             "symbol": symbol,
