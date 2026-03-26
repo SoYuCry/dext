@@ -69,86 +69,15 @@ from .types import (
 
 # -----------------------------------------------------------------------------
 
-# rsa jwt signing
-from cryptography.hazmat import backends
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding, ed25519
-# from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+# cryptographic signing — only ed25519 (for eddsa/backpack) is actively used
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
-# -----------------------------------------------------------------------------
-
-# ecdsa signing (optional)
-try:
-    import ecdsa  # type: ignore
-except ImportError:
-    ecdsa = None
-try:
-    import sha3 as keccak  # type: ignore
-except ImportError:
-    keccak = None
-
-try:
-    import coincurve
-except ImportError:
-    coincurve = None
-
-# eddsa signing
+# eddsa signing (used by backpack)
 try:
     import axolotl_curve25519 as eddsa
 except ImportError:
     eddsa = None
-
-# eth signing (optional)
-try:
-    from .static_dependencies.ethereum import abi  # type: ignore
-    from .static_dependencies.ethereum import account  # type: ignore
-    from .static_dependencies.msgpack import packb  # type: ignore
-except ImportError:
-    abi = None
-    account = None
-    packb = None
-
-# starknet (optional)
-try:
-    from .static_dependencies.starknet.ccxt_utils import get_private_key_from_eth_signature  # type: ignore
-    from .static_dependencies.starknet.hash.address import compute_address  # type: ignore
-    from .static_dependencies.starknet.hash.selector import get_selector_from_name  # type: ignore
-    from .static_dependencies.starknet.hash.utils import message_signature, private_to_stark_key  # type: ignore
-    from .static_dependencies.starknet.utils.typed_data import TypedData as TypedDataDataclass  # type: ignore
-except ImportError:
-    get_private_key_from_eth_signature = None
-    compute_address = None
-    get_selector_from_name = None
-    message_signature = None
-    private_to_stark_key = None
-    TypedDataDataclass = None
-
-# dydx (optional)
-try:
-    from .static_dependencies.mnemonic import Mnemonic  # type: ignore
-    from .static_dependencies.bip.bip44 import Bip44  # type: ignore
-    from .static_dependencies.dydx_v4_client.cosmos.tx.signing.v1beta1.signing_pb2 import SignMode  # type: ignore
-    from .static_dependencies.dydx_v4_client.cosmos.tx.v1beta1.tx_pb2 import (  # type: ignore
-        AuthInfo,
-        Fee,
-        ModeInfo,
-        SignDoc,
-        SignerInfo,
-        Tx,
-        TxBody,
-        TxRaw,
-    )
-    from exchanges.base.static_dependencies.dydx_v4_client.registry import (  # type: ignore
-        encode_as_any,
-    )
-except ImportError:
-    Mnemonic = None
-    Bip44 = None
-    SignMode = None
-    AuthInfo = Fee = ModeInfo = SignDoc = SignerInfo = Tx = TxBody = TxRaw = None
-    encode_as_any = None
-zklink_sdk = None
 
 # -----------------------------------------------------------------------------
 
@@ -224,16 +153,10 @@ class Exchange(object):
     enableRateLimit = True
     rateLimit = 2000  # milliseconds = seconds * 1000
     timeout = 10000   # milliseconds = seconds * 1000
-    asyncio_loop = None
-    aiohttp_proxy = None
     ssl_context = None
     trust_env = False
-    aiohttp_trust_env = False
     requests_trust_env = False
     session = None  # Session () by default
-    tcp_connector = None  # aiohttp.TCPConnector
-    aiohttp_socks_connector = None
-    socks_proxy_sessions = None
     verify = True  # SSL verification
     validateServerSsl = True
     validateClientSsl = False
@@ -243,9 +166,7 @@ class Exchange(object):
     symbols = None
     codes = None
     timeframes = {}
-    tokenBucket = None
-    rollingWindowSize = 0.0  # set to 0.0 to use leaky bucket rate limiter
-    rateLimiterAlgorithm = 'leakyBucket'
+    # Rate limiting: throttle() uses simple timestamp-based sleep
 
     fees = {
         'trading': {
@@ -274,7 +195,6 @@ class Exchange(object):
     urls = None
     api = None
     parseJsonResponse = True
-    throttler = None
 
     # PROXY & USER-AGENTS (see "examples/proxy-usage" file for explanation)
     proxy = None  # for backwards compatibility
@@ -300,8 +220,6 @@ class Exchange(object):
     ws_proxy = None
     wssProxy = None
     wss_proxy = None
-    wsSocksProxy = None
-    ws_socks_proxy = None
     #
     userAgents = {
         'chrome': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.94 Safari/537.36',
@@ -455,7 +373,7 @@ class Exchange(object):
     synchronous = True
 
     def __init__(self, config: ConstructorArgs = {}):
-        self.aiohttp_trust_env = self.aiohttp_trust_env or self.trust_env
+        # trust_env is used by requests session
         self.requests_trust_env = self.requests_trust_env or self.trust_env
 
         self.precision = dict() if self.precision is None else self.precision
@@ -533,10 +451,6 @@ class Exchange(object):
 
     def __str__(self):
         return self.name
-
-    def init_throttler(self, cost=None):
-        # stub in sync
-        pass
 
     def throttle(self, cost=None):
         now = float(self.milliseconds())
@@ -1352,11 +1266,8 @@ class Exchange(object):
 
     @staticmethod
     def hash(request, algorithm='md5', digest='hex'):
-        if algorithm == 'keccak':
-            binary = bytes(keccak.SHA3(request))
-        else:
-            h = hashlib.new(algorithm, request)
-            binary = h.digest()
+        h = hashlib.new(algorithm, request)
+        binary = h.digest()
         if digest == 'base64':
             return Exchange.binary_to_base64(binary)
         elif digest == 'hex':
@@ -1406,10 +1317,6 @@ class Exchange(object):
     @staticmethod
     def base64_to_string(s):
         return Exchange.decode(base64.b64decode(s))
-
-    @staticmethod
-    def packb(o):
-        return packb(o)
 
     @staticmethod
     def int_to_base16(num):
@@ -2098,7 +2005,6 @@ class Exchange(object):
                 'price': {'min': None, 'max': None},
                 'cost': {'min': None, 'max': None},
             },
-            'rollingWindowSize': 60000,  # default 60 seconds, requires rateLimiterAlgorithm to be set as 'rollingWindow'
         }
 
     def safe_bool_n(self, dictionaryOrList, keys: List[IndexType], defaultValue: bool = None):
@@ -2296,36 +2202,6 @@ class Exchange(object):
             joinedProxyNames = ','.join(usedProxies)
             raise InvalidProxySettings(self.id + ' you have multiple conflicting proxy settings(' + joinedProxyNames + '), please use only one from: httpProxy, httpsProxy, httpProxyCallback, httpsProxyCallback, socksProxy, socksProxyCallback')
         return [httpProxy, httpsProxy, socksProxy]
-
-    def check_ws_proxy_settings(self):
-        usedProxies = []
-        wsProxy = None
-        wssProxy = None
-        wsSocksProxy = None
-        # ws proxy
-        isWsProxyDefined = self.value_is_defined(self.wsProxy)
-        is_ws_proxy_defined = self.value_is_defined(self.ws_proxy)
-        if isWsProxyDefined or is_ws_proxy_defined:
-            usedProxies.append('wsProxy')
-            wsProxy = self.wsProxy if (isWsProxyDefined) else self.ws_proxy
-        # wss proxy
-        isWssProxyDefined = self.value_is_defined(self.wssProxy)
-        is_wss_proxy_defined = self.value_is_defined(self.wss_proxy)
-        if isWssProxyDefined or is_wss_proxy_defined:
-            usedProxies.append('wssProxy')
-            wssProxy = self.wssProxy if (isWssProxyDefined) else self.wss_proxy
-        # ws socks proxy
-        isWsSocksProxyDefined = self.value_is_defined(self.wsSocksProxy)
-        is_ws_socks_proxy_defined = self.value_is_defined(self.ws_socks_proxy)
-        if isWsSocksProxyDefined or is_ws_socks_proxy_defined:
-            usedProxies.append('wsSocksProxy')
-            wsSocksProxy = self.wsSocksProxy if (isWsSocksProxyDefined) else self.ws_socks_proxy
-        # check
-        length = len(usedProxies)
-        if length > 1:
-            joinedProxyNames = ','.join(usedProxies)
-            raise InvalidProxySettings(self.id + ' you have multiple conflicting proxy settings(' + joinedProxyNames + '), please use only one from: wsProxy, wssProxy, wsSocksProxy')
-        return [wsProxy, wssProxy, wsSocksProxy]
 
     def check_conflicting_proxies(self, proxyAgentSet, proxyUrlSet):
         if proxyAgentSet and proxyUrlSet:
@@ -2552,23 +2428,6 @@ class Exchange(object):
     def init_rest_rate_limiter(self):
         if self.rateLimit is None or (self.id is not None and self.rateLimit == -1):
             raise ExchangeError(self.id + '.rateLimit property is not configured')
-        refillRate = self.MAX_VALUE
-        if self.rateLimit > 0:
-            refillRate = 1 / self.rateLimit
-        useLeaky = (self.rollingWindowSize == 0.0) or (self.rateLimiterAlgorithm == 'leakyBucket')
-        algorithm = 'leakyBucket' if useLeaky else 'rollingWindow'
-        defaultBucket = {
-            'delay': 0.001,
-            'capacity': 1,
-            'cost': 1,
-            'refillRate': refillRate,
-            'algorithm': algorithm,
-            'windowSize': self.rollingWindowSize,
-            'rateLimit': self.rateLimit,
-        }
-        existingBucket = {} if (self.tokenBucket is None) else self.tokenBucket
-        self.tokenBucket = self.extend(defaultBucket, existingBucket)
-        self.init_throttler()
 
     def features_generator(self):
         #
