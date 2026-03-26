@@ -77,13 +77,15 @@ class EventMetadata:
 
     Contains timestamp and event type information.
     """
-    ts_exchange: int      # Exchange timestamp (milliseconds)
-    ts_local: int         # Local receive timestamp (milliseconds)
-    event_type: EventType # Event type
+    ts_exchange: Optional[int]  # Exchange timestamp (ms). None when exchange does not provide it.
+    ts_local: int               # Local receive timestamp (milliseconds)
+    event_type: EventType       # Event type
 
     @property
-    def latency_ms(self) -> int:
-        """Latency (ms) = ts_local - ts_exchange"""
+    def latency_ms(self) -> Optional[int]:
+        """Latency (ms) = ts_local - ts_exchange. None if ts_exchange unavailable."""
+        if self.ts_exchange is None:
+            return None
         return self.ts_local - self.ts_exchange
 
     def __str__(self) -> str:
