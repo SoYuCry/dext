@@ -60,7 +60,7 @@ class aster(Exchange):
                     "future": False,
                     "option": False,
                     "addMargin": False,
-                    "cancelAllOrders": False,
+                    "cancelAllOrders": True,
                     "cancelOrder": True,
                     "createOrder": True,
                     "fetchBalance": True,
@@ -632,6 +632,17 @@ class aster(Exchange):
             params = self.omit(params, "clientOrderId")
         response = self._request(self.endpoints.privateDeleteFapiV1Order, self.extend(request, params))
         return self.parse_order(response, market)
+
+    def cancel_all_orders(
+        self, symbol: Optional[str] = None, params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        params = params or {}
+        if symbol is None:
+            raise ArgumentsRequired(self.id + " cancel_all_orders() requires a symbol argument")
+        self.load_markets()
+        market = self.market(symbol)
+        request: Dict[str, Any] = {"symbol": market["id"]}
+        return self._request(self.endpoints.privateDeleteFapiV1AllOpenOrders, self.extend(request, params))
 
     def fetch_order(self, id: str, symbol: Optional[str] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         params = params or {}

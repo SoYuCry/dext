@@ -1,8 +1,10 @@
 """Aster WebSocket client collection
 
-Provides three WebSocket clients:
+Provides five WebSocket clients:
 - AsterWS: Incremental update stream (high-frequency trading)
 - AsterDepthWS: Full snapshot stream (general use, recommended)
+- AsterAggTradeWS: Aggregated trade stream (order flow analysis)
+- AsterBookTickerWS: Real-time best bid/ask (BBO, lowest latency)
 - AsterUserWS: User data stream (account monitoring)
 
 Usage examples:
@@ -169,6 +171,117 @@ class AsterDepthWS(WebsocketClient):
             "ts_local": ts_local_ms,
             "bids": _parse_levels(data.get("b", [])),
             "asks": _parse_levels(data.get("a", [])),
+            "raw": data,
+        }
+        await self.on_event(event)
+
+
+# ============================================================
+# aggTrade stream (real-time trade-by-trade data)
+# ============================================================
+
+class AsterAggTradeWS(WebsocketClient):
+    """Aster aggregated trade stream.
+
+    Pushes individual trades in real-time — essential for order flow analysis
+    and market-making strategies.
+
+    Each event contains: price, quantity, side (buyer_is_maker), timestamp.
+
+    WebSocket URL:
+        wss://fstream.asterdex.com/stream?streams={symbol}@aggTrade
+
+    Usage:
+        ws = AsterAggTradeWS(['xauusdt'], on_event)
+        await ws.run_forever()
+    """
+
+    def __init__(self, symbols: Iterable[str], on_event) -> None:
+        self.symbols = [s.lower() for s in symbols]
+        streams = "/".join(f"{s}@aggTrade" for s in self.symbols)
+        url = f"wss://fstream.asterdex.com/stream?streams={streams}"
+        super().__init__(name="aster_aggtrade", stream_url=url, on_event=on_event)
+
+    async def subscribe(self, ws) -> None:
+        return None
+
+    async def handle_message(self, raw: str, ts_local_ms: int) -> None:
+        msg = self.decode(raw)
+        data = msg.get("data") or {}
+        if not data or data.get("e") != "aggTrade":
+            return
+        symbol = data.get("s")
+        if symbol and symbol.lower() not in self.symbols:
+            return
+        event = {
+            "exchange": "aster",
+            "symbol": symbol,
+            "stream": "aggTrade",
+            "ts_exchange": data.get("T"),
+            "ts_local": ts_local_ms,
+            "agg_trade_id": data.get("a"),
+            "price": float(data.get("p", 0)),
+            "quantity": float(data.get("q", 0)),
+            "first_trade_id": data.get("f"),
+            "last_trade_id": data.get("l"),
+            "buyer_is_maker": data.get("m", False),
+            "raw": data,
+        }
+        await self.on_event(event)
+
+
+# ============================================================
+# bookTicker stream (real-time best bid/ask)
+# ============================================================
+
+class AsterBookTickerWS(WebsocketClient):
+    """Aster individual symbol book ticker stream.
+
+    Pushes real-time best bid/ask price and quantity updates — faster and
+    lighter than depth snapshots for BBO-only strategies.
+
+    WebSocket URL:
+        wss://fstream.asterdex.com/stream?streams={symbol}@bookTicker
+
+    Usage:
+        ws = AsterBookTickerWS(['xauusdt'], on_event)
+        await ws.run_forever()
+    """
+
+    def __init__(self, symbols: Iterable[str], on_event) -> None:
+        self.symbols = [s.lower() for s in symbols]
+        streams = "/".join(f"{s}@bookTicker" for s in self.symbols)
+        url = f"wss://fstream.asterdex.com/stream?streams={streams}"
+        super().__init__(name="aster_bookticker", stream_url=url, on_event=on_event)
+
+    async def subscribe(self, ws) -> None:
+        return None
+
+    async def handle_message(self, raw: str, ts_local_ms: int) -> None:
+        msg = self.decode(raw)
+        data = msg.get("data") or {}
+        if not data:
+            return
+        symbol = data.get("s")
+        if symbol and symbol.lower() not in self.symbols:
+            return
+        try:
+            best_bid = float(data.get("b", 0))
+            best_ask = float(data.get("a", 0))
+            bid_qty = float(data.get("B", 0))
+            ask_qty = float(data.get("A", 0))
+        except (TypeError, ValueError):
+            return
+        event = {
+            "exchange": "aster",
+            "symbol": symbol,
+            "stream": "bookTicker",
+            "ts_exchange": data.get("T") or data.get("E"),
+            "ts_local": ts_local_ms,
+            "best_bid": best_bid,
+            "best_ask": best_ask,
+            "bid_qty": bid_qty,
+            "ask_qty": ask_qty,
             "raw": data,
         }
         await self.on_event(event)
