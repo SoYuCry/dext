@@ -98,25 +98,25 @@ class BinanceWS(WebsocketClient):
             return
 
         if stream.endswith("@bookTicker"):
-            symbol = data.get("s") or stream.split("@", 1)[0].upper()
-            if symbol.upper() not in self.symbols:
+            # Binance bookTicker fields: u, s, b, B, a, A — no E or T
+            symbol = data.get("s", "").upper()
+            if symbol not in self.symbols:
                 return
             parsed = _parse_book_ticker(data)
             if not parsed:
                 return
             bid_price, bid_qty, ask_price, ask_qty = parsed
             # Deduplicate: skip if BBO unchanged
-            key = symbol.upper()
-            prev = self._last_bbo.get(key)
+            prev = self._last_bbo.get(symbol)
             current = (bid_price, bid_qty, ask_price, ask_qty)
             if prev == current:
                 return
-            self._last_bbo[key] = current
+            self._last_bbo[symbol] = current
             event = {
                 "exchange": "binance",
-                "symbol": symbol.upper(),
+                "symbol": symbol,
                 "stream": "bbo",
-                "ts_exchange": data.get("E") or data.get("T") or ts_local_ms,
+                "ts_exchange": None,  # bookTicker has no server timestamp
                 "ts_local": ts_local_ms,
                 "bids": [[bid_price, bid_qty]],
                 "asks": [[ask_price, ask_qty]],
@@ -126,19 +126,22 @@ class BinanceWS(WebsocketClient):
             return
 
         if "@depth" in stream:
-            symbol = data.get("s") or stream.split("@", 1)[0].upper()
-            if symbol.upper() not in self.symbols:
+            # Binance depth has two formats:
+            #   - Partial depth snapshot (@depth5/@depth10/@depth20): keys "bids", "asks", "lastUpdateId"
+            #   - Diff depth (@depth): keys "b", "a", "E", "s"
+            symbol = data.get("s", "").upper()
+            if symbol not in self.symbols:
                 return
-            bids = data.get("b") or data.get("bids") or []
-            asks = data.get("a") or data.get("asks") or []
+            bids_raw = data.get("b") if "b" in data else data.get("bids", [])
+            asks_raw = data.get("a") if "a" in data else data.get("asks", [])
             event = {
                 "exchange": "binance",
-                "symbol": symbol.upper(),
+                "symbol": symbol,
                 "stream": "l2",
-                "ts_exchange": data.get("E") or data.get("T") or ts_local_ms,
+                "ts_exchange": data.get("E"),  # event time (present in diff; None in partial snapshot)
                 "ts_local": ts_local_ms,
-                "bids": _parse_levels(bids),
-                "asks": _parse_levels(asks),
+                "bids": _parse_levels(bids_raw),
+                "asks": _parse_levels(asks_raw),
                 "raw": data,
             }
             await self.on_event(event)
@@ -272,7 +275,7 @@ class BinanceUserWS(WebsocketClient):
             "exchange": "binance",
             "stream": "user",
             "event_type": event_type,
-            "ts_exchange": msg.get("E") or msg.get("T") or msg.get("eventTime"),
+            "ts_exchange": msg.get("E"),  # all user stream events have E (event time)
             "ts_local": ts_local_ms,
             "raw": msg,
         }

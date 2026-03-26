@@ -410,7 +410,7 @@ class LighterWS(WebsocketClient):
                                     order_book.get("timestamp")
                                     or order_book.get("ts")
                                     or data.get("timestamp")
-                                    or ts_local_ms
+                                    or None
                                 )
 
                                 bids = []
@@ -476,7 +476,7 @@ class LighterWS(WebsocketClient):
                     "exchange": "lighter",
                     "stream": "account_orders",
                     "market_index": self.market_index,
-                    "ts_exchange": data.get("timestamp") or data.get("ts") or ts_local_ms,
+                    "ts_exchange": data.get("timestamp") or data.get("ts") or None,
                     "ts_local": ts_local_ms,
                     "orders": enriched_orders,
                     "raw": data,

@@ -107,7 +107,7 @@ class AsterWS(WebsocketClient):
             "exchange": "aster",
             "symbol": symbol,
             "stream": "l2",
-            "ts_exchange": data.get("E") or data.get("T"),
+            "ts_exchange": data.get("E"),  # event time, present in depth incremental
             "ts_local": ts_local_ms,
             "bids": _parse_levels(data.get("b", [])),
             "asks": _parse_levels(data.get("a", [])),
@@ -167,7 +167,7 @@ class AsterDepthWS(WebsocketClient):
             "exchange": "aster",
             "symbol": symbol,
             "stream": f"depth{self.depth_level}",
-            "ts_exchange": data.get("E") or data.get("T"),
+            "ts_exchange": data.get("E"),  # event time, present in depth snapshot
             "ts_local": ts_local_ms,
             "bids": _parse_levels(data.get("b", [])),
             "asks": _parse_levels(data.get("a", [])),
@@ -283,7 +283,7 @@ class AsterBookTickerWS(WebsocketClient):
             "exchange": "aster",
             "symbol": symbol,
             "stream": "bookTicker",
-            "ts_exchange": data.get("T") or data.get("E"),
+            "ts_exchange": data.get("E"),  # event time
             "ts_local": ts_local_ms,
             # Unified format: bids/asks arrays, same as depth streams
             "bids": [[best_bid, bid_qty]],
@@ -423,7 +423,7 @@ class AsterUserWS(WebsocketClient):
             "exchange": "aster",
             "stream": "user",
             "event_type": event_type,
-            "ts_exchange": msg.get("E") or msg.get("T"),
+            "ts_exchange": msg.get("E"),  # event time, present in all user stream events
             "ts_local": ts_local_ms,
             "raw": msg,
         }

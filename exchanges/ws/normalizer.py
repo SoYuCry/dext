@@ -144,7 +144,8 @@ class LighterNormalizer(Normalizer):
         symbol = self.normalize_symbol(symbol_raw, market_index=market_index)
 
         ts_local = int(raw_event.get("ts_local") or self.now_ms())
-        ts_exchange = int(raw_event.get("ts_exchange") or ts_local)
+        _raw_ts = raw_event.get("ts_exchange")
+        ts_exchange = int(_raw_ts) if _raw_ts is not None else None
         last_price = raw_event.get("last_price")
 
         return BBOUpdate(
@@ -192,7 +193,8 @@ class LighterNormalizer(Normalizer):
         symbol_raw = raw_event.get("symbol") or ""
         symbol = self.normalize_symbol(symbol_raw, market_index=market_index)
         ts_local = int(raw_event.get("ts_local") or self.now_ms())
-        ts_exchange = int(raw_event.get("ts_exchange") or ts_local)
+        _raw_ts = raw_event.get("ts_exchange")
+        ts_exchange = int(_raw_ts) if _raw_ts is not None else None
 
         for order in orders:
             if not isinstance(order, dict):
@@ -298,7 +300,8 @@ class BackpackNormalizer(Normalizer):
 
         symbol = self.normalize_symbol(raw_event.get("symbol", ""))
         ts_local = int(raw_event.get("ts_local") or self.now_ms())
-        ts_exchange = int(raw_event.get("ts_exchange") or ts_local)
+        _raw_ts = raw_event.get("ts_exchange")
+        ts_exchange = int(_raw_ts) if _raw_ts is not None else None
 
         return BBOUpdate(
             exchange=self.exchange_name,
@@ -340,7 +343,8 @@ class BackpackNormalizer(Normalizer):
 
         symbol = self.normalize_symbol(raw_event.get("symbol", ""))
         ts_local = int(raw_event.get("ts_local") or self.now_ms())
-        ts_exchange = int(raw_event.get("ts_exchange") or ts_local)
+        _raw_ts = raw_event.get("ts_exchange")
+        ts_exchange = int(_raw_ts) if _raw_ts is not None else None
 
         return OrderUpdate(
             exchange=self.exchange_name,
@@ -445,7 +449,8 @@ class BinanceNormalizer(Normalizer):
 
         symbol = self.normalize_symbol(raw_event.get("symbol", ""))
         ts_local = int(raw_event.get("ts_local") or self.now_ms())
-        ts_exchange = int(raw_event.get("ts_exchange") or ts_local)
+        _raw_ts = raw_event.get("ts_exchange")
+        ts_exchange = int(_raw_ts) if _raw_ts is not None else None
 
         return BBOUpdate(
             exchange=self.exchange_name,
@@ -488,7 +493,8 @@ class BinanceNormalizer(Normalizer):
 
         symbol = self.normalize_symbol(raw_event.get("symbol", ""))
         ts_local = int(raw_event.get("ts_local") or self.now_ms())
-        ts_exchange = int(raw_event.get("ts_exchange") or ts_local)
+        _raw_ts = raw_event.get("ts_exchange")
+        ts_exchange = int(_raw_ts) if _raw_ts is not None else None
 
         return OrderUpdate(
             exchange=self.exchange_name,
@@ -565,7 +571,8 @@ class AsterNormalizer(Normalizer):
 
         symbol = self.normalize_symbol(raw_event.get("symbol", ""))
         ts_local = int(raw_event.get("ts_local") or self.now_ms())
-        ts_exchange = int(raw_event.get("ts_exchange") or ts_local)
+        _raw_ts = raw_event.get("ts_exchange")
+        ts_exchange = int(_raw_ts) if _raw_ts is not None else None
 
         return BBOUpdate(
             exchange=self.exchange_name,
@@ -608,7 +615,8 @@ class AsterNormalizer(Normalizer):
 
         symbol = self.normalize_symbol(raw_event.get("symbol", ""))
         ts_local = int(raw_event.get("ts_local") or self.now_ms())
-        ts_exchange = int(raw_event.get("ts_exchange") or ts_local)
+        _raw_ts = raw_event.get("ts_exchange")
+        ts_exchange = int(_raw_ts) if _raw_ts is not None else None
 
         return OrderUpdate(
             exchange=self.exchange_name,
@@ -680,7 +688,8 @@ class VariationalNormalizer(Normalizer):
             latency_ms = int(latency_ms)
         except (TypeError, ValueError):
             latency_ms = 0
-        ts_exchange = int(raw_event.get("ts_exchange") or (ts_local - latency_ms))
+        _raw_ts = raw_event.get("ts_exchange")
+        ts_exchange = int(_raw_ts) if _raw_ts is not None else None
 
         return BBOUpdate(
             exchange=self.exchange_name,
@@ -713,7 +722,8 @@ class VariationalNormalizer(Normalizer):
 
         symbol = self.normalize_symbol(raw_event.get("symbol", ""))
         ts_local = int(raw_event.get("ts_local") or self.now_ms())
-        ts_exchange = int(raw_event.get("ts_exchange") or ts_local)
+        _raw_ts = raw_event.get("ts_exchange")
+        ts_exchange = int(_raw_ts) if _raw_ts is not None else None
 
         return OrderUpdate(
             exchange=self.exchange_name,
