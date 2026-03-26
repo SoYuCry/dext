@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**dext** is a unified cryptocurrency exchange API library providing standardized REST clients and WebSocket connections for multiple exchanges (Aster, Backpack, Binance, Lighter, Variational). It serves trading strategies and automated trading scripts with normalized interfaces.
+**dext** is a unified cryptocurrency exchange API library providing CCXT-style REST clients and WebSocket connections for multiple exchanges (Aster, Backpack, Binance, Lighter, Variational). It serves trading strategies and automated trading scripts with normalized interfaces.
 
 ### Terminology
 
@@ -35,6 +35,21 @@ pip install -e .
 # Install with dependencies
 pip install -r requirements.txt
 ```
+
+### Linting / Formatting
+
+No linting or formatting tools are configured. Quality is enforced through tests only.
+
+### Python Version
+
+Requires Python >= 3.9.
+
+### Key Dependencies
+
+- `PyNaCl`: Ed25519 cryptographic signatures (Backpack)
+- `websockets>=11.0.0`: WebSocket connections
+- `curl_cffi`: Browser-impersonation HTTP client (Variational)
+- `python-dotenv`: Environment variable loading from `.env`
 
 ## Architecture
 
@@ -82,7 +97,7 @@ exchanges/
    ↓
 4. fetch() → HTTP request
    ↓
-5. _handle_http_error()  # HTTP error handling (400, 401, 404, 429, 5xx)
+5. handle_http_status_code()  # HTTP error handling via httpExceptions mapping
    ↓
 6. parse_error()  # Exchange-specific error handling
    ↓
@@ -95,7 +110,7 @@ exchanges/
 - **Endpoint Configuration** (`endpoints/{exchange}.py`): Defines all API endpoints with Entry objects containing path, visibility (public/private), HTTP method, and cost
 - **Unified Request Method** (`_request()`): Handles the complete request lifecycle including signing, error handling, and response parsing
 - **Two-Layer Error Handling**:
-  - Layer 1: `_handle_http_error()` - Maps HTTP status codes to dext exceptions
+  - Layer 1: `handle_http_status_code()` - Maps HTTP status codes to CCXT exceptions via `httpExceptions` dict
   - Layer 2: `parse_error()` - Handles exchange-specific error codes
 - **Signing Methods** (`sign()`): Exchange-specific authentication (Ed25519, HMAC-SHA256, zkSync, Cookie)
 
@@ -149,7 +164,7 @@ order = await exchange.create_order('ETH/USDC', 'limit', 'buy', 1.0, 2000)
 - Strategy latency: Eliminates blocking on position API calls
 - API load: Reduced from every tick to every 30 seconds
 
-**Implementation Pattern**:
+**Implementation Pattern** (see `strategies/eth_spread_arbitrage/strategy.py`):
 ```python
 # Fast path: Get position from local cache
 positions = self._get_positions_fast()  # Returns (lg_pos, var_pos) or None
@@ -197,12 +212,13 @@ bbo = await dispatcher.get_market_data()  # Returns BBOUpdate
 - Supports both market data WS and user data WS
 - Symbol format: `SOL_USDC` (underscore separator)
 
-**Variational**:
+**Variational** (**EXPERIMENTAL**):
 - RFQ-based (request-for-quote) derivatives exchange
-- Cookie-based authentication via browser impersonation (curl_cffi)
+- Cookie-based authentication via browser impersonation (curl_cffi) — no official API-key auth
 - Uses polling for market data (no native WebSocket)
 - Quote IDs are single-use; must request new quote for each trade
 - **Special**: Uses custom `make_request()` instead of base `_request()` due to curl_cffi dependency
+- **Risk**: Any change to cookie format or CloudFlare policy can break this client without warning
 
 **Aster**:
 - Binance-style futures DEX
@@ -220,6 +236,28 @@ Environment variables are loaded from `.env` via `config.py`. Each exchange has 
 
 Proxy settings: `HTTP_PROXY`, `HTTPS_PROXY`
 
+### Strategy Pattern
+
+Strategies live in `strategies/` and typically:
+1. Inherit from `strategies/strategy_base.py`
+2. Use the unified WebSocket dispatcher pattern
+3. Have their own `config.py` for strategy-specific parameters (dataclasses with `exchange_a_kwargs()` / `exchange_b_kwargs()` builders)
+4. Include a `runner.py` for execution
+5. Follow async lifecycle: `start()` → `_run_loop()` → `_tick()` → `stop()`
+
+**Shared Infrastructure** in `strategies/`:
+- `base_exceptions.py`: `StrategyException`, `ConfigurationError`, `ExecutionError`, `DataError`, `RiskError`
+- `base_alerts.py`: `AlertManager` with severity levels (CRITICAL/HIGH/MEDIUM/LOW) and channel support (logging, webhook)
+- `strategy_base.py`: Base class with `log_config()` helper that redacts secrets at startup
+
+Example strategies:
+- `eth_spread_arbitrage/`: ETH spread trading between Lighter and Variational
+- `xau_arbitrage/`: Gold (XAU) delta-neutral market making between Aster and Backpack
+
+### Logging
+
+`logger.py` provides `setup_logger(name)` which outputs to both console and file (configured via `LOG_FILE` env var). UTF-8 encoded.
+
 ### Testing Conventions
 
 - Test files in `tests/` use naming pattern `test_*.py`
@@ -231,8 +269,12 @@ Proxy settings: `HTTP_PROXY`, `HTTPS_PROXY`
 
 When working on features, these files provide critical context:
 
+- `ARCHITECTURE.md`: Chinese documentation of module layering and design decisions
+- `STRUCTURE.md`: File structure and recommended usage patterns
 - `exchanges/README.md`: Comprehensive API usage guide with examples
 - `docs/exchanges/`: Per-exchange documentation (aster.md, backpack.md, lighter.md, variational.md)
+- `docs/exchanges/common-pitfalls.md`: Known integration pitfalls (URL duplication, precision bugs, USD-vs-contracts confusion)
+- `strategies/README.md`: Strategy patterns and shared infrastructure
 
 ### Precision Handling
 
@@ -255,7 +297,7 @@ To add a new exchange:
    - Implement `describe()` method with exchange metadata
    - Implement `sign(request, endpoint, params)` for authentication
    - Implement `parse_error(response)` for exchange-specific error handling
-   - Implement standardized methods using `_request()`: `fetch_ticker()`, `create_order()`, etc.
+   - Implement CCXT-style methods using `_request()`: `fetch_ticker()`, `create_order()`, etc.
    - Implement `parse_*()` methods for response normalization: `parse_ticker()`, `parse_order()`, etc.
 3. Add authentication helpers in `exchanges/auth/{exchange}.py` (Ed25519, HMAC, zkSync, etc.)
 
@@ -281,4 +323,71 @@ To add a new exchange:
 - All exchanges use unified `_request()` for consistency (except special cases like Variational)
 - Endpoint configuration separates API definitions from business logic
 - Two-layer error handling ensures both HTTP and business errors are handled
-- `parse_*()` methods standardize responses to a unified format
+- `parse_*()` methods standardize responses to CCXT format
+
+## Integration Testing Guide
+
+### Core Policy: Perpetuals Only
+
+This project focuses on derivatives trading. **Only test perpetual contracts** unless spot is explicitly required.
+
+**Symbol Naming by Exchange:**
+- **Backpack**: `SOL_USDC_PERP` (perpetual), `SOL_USDC` (spot)
+- **Aster**: `SOL/USDC:USDC` (perpetual), `SOL/USDC` (spot)
+- **Lighter**: `ETH` (all markets are perpetual by default)
+- **Binance**: `BTCUSDT` (perpetual via futures API), `BTC/USDT` (spot)
+
+**Default strategy**: Test LONG only (SHORT is symmetric). WebSocket verification in same test as trades. All positions MUST be closed before test completion.
+
+### Critical Testing Rules
+
+1. **Always close positions after testing** using `reduceOnly: True` for futures to prevent accidental position reversal. Use amounts that are multiples of minimum order size.
+2. **Verify position/balance before closing** — don't blindly send close orders.
+3. **Test WebSocket order events** alongside REST — many bugs only appear in WS layer.
+4. **Use conservative pricing**: 20% below market for non-fill tests, 5% above for execution tests.
+5. **Respect minimum order sizes**: Check `market['limits']['amount']['min']` before trading.
+
+**Lesson learned**: Backpack spot test left 0.00999 SOL that couldn't be sold (min order 0.01). Always close fully.
+
+**Position closing pattern:**
+```python
+close_order = exchange.create_order(
+    symbol='SOL_USDC_PERP', type='limit', side='sell',
+    amount=position_size, price=close_price,
+    params={'reduceOnly': True}
+)
+```
+
+### Integration Test Template
+
+See `tests/integration/test_comprehensive_template.py` for a complete template that includes:
+- Spot market testing with balance verification
+- Futures market testing with position verification
+- WebSocket order flow testing
+- Automatic position cleanup
+- Detailed logging and error handling
+
+### Running Integration Tests
+
+```bash
+# Test single exchange (no real trading)
+pytest tests/integration/test_backpack.py -v
+
+# Test with real trading enabled (requires --enable-trading flag)
+pytest tests/integration/test_backpack.py -v --enable-trading
+
+# Comprehensive test (spot + futures + WebSocket + cleanup)
+python tests/integration/test_comprehensive_template.py --exchange backpack
+```
+
+### Cost Estimates
+
+Typical testing costs per exchange:
+- Query API tests: $0 (no trades)
+- Spot order lifecycle: ~$0.50-2.00 (if closed properly)
+- Futures order lifecycle: ~$0.10-0.50 (lower fees, easier to close)
+- WebSocket tests: $0 (can use unfilled orders)
+
+**Total per exchange**: ~$1-3 if all positions are properly closed.
+
+**WARNING**: Improper testing (leaving positions) can waste $5-20 per exchange in stuck capital.
