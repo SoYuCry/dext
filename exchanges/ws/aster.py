@@ -278,10 +278,9 @@ class AsterBookTickerWS(WebsocketClient):
             "stream": "bookTicker",
             "ts_exchange": data.get("T") or data.get("E"),
             "ts_local": ts_local_ms,
-            "best_bid": best_bid,
-            "best_ask": best_ask,
-            "bid_qty": bid_qty,
-            "ask_qty": ask_qty,
+            # Unified format: bids/asks arrays, same as depth streams
+            "bids": [[best_bid, bid_qty]],
+            "asks": [[best_ask, ask_qty]],
             "raw": data,
         }
         await self.on_event(event)
